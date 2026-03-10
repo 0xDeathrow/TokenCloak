@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Environment & Secrets
+.env
+.env.local
+.env.production
+relayer/relayer-keypair.json
+anchor/target/deploy/*-keypair.json
+
+# Build output
+dist/
+build/
+anchor/target/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary / test files
+test_proof.cjs
+test_poseidon.cjs
+gen_zero_hashes.cjs
+
+# Logs
+*.log
+npm-debug.log*
+
+# ZK build artifacts (large files)
+circuits/build/
+circuits/*.ptau
+circuits/withdraw_0000.zkey
+circuits/withdraw.sym
+circuits/withdraw.r1cs
+circuits/withdraw_cpp/
+circuits/withdraw_js/
+circuits/withdraw_final.zkey
