@@ -769,12 +769,42 @@ app.get('/health', async (req, res) => {
 // Relayer-Mediated Deposit — obscures depositing wallet
 // ============================================================================
 
-// Returns a hop wallet address for the user to send tokens to
-app.get('/relay/deposit-address', (req, res) => {
-    const [hopWallet] = pickRandomHopWallets();
-    res.json({
-        depositAddress: hopWallet.publicKey.toBase58(),
-    });
+// Returns a hop wallet address + pre-creates ATA for the token
+app.get('/relay/deposit-address', async (req, res) => {
+    try {
+        const { tokenMint } = req.query;
+        const [hopWallet] = pickRandomHopWallets();
+
+        let hopAtaAddress = null;
+        if (tokenMint) {
+            const mintPubkey = new PublicKey(tokenMint);
+            const mintInfo = await connection.getAccountInfo(mintPubkey);
+            if (mintInfo) {
+                const tokenProgramId = mintInfo.owner.equals(TOKEN_2022_PROGRAM_ID) ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
+                const hopAta = await getAssociatedTokenAddress(mintPubkey, hopWallet.publicKey, true, tokenProgramId);
+                // Pre-create ATA if it doesn't exist (relayer pays)
+                try { await getAccount(connection, hopAta); }
+                catch {
+                    console.log(`[DEPOSIT-RELAY] Pre-creating ATA for hop ${hopWallet.publicKey.toBase58().slice(0, 8)}...`);
+                    const createAtaTx = new Transaction().add(
+                        createAssociatedTokenAccountInstruction(
+                            relayerKeypair.publicKey, hopAta, hopWallet.publicKey, mintPubkey, tokenProgramId
+                        )
+                    );
+                    await sendAndConfirmTransaction(connection, createAtaTx, [relayerKeypair]);
+                }
+                hopAtaAddress = hopAta.toBase58();
+            }
+        }
+
+        res.json({
+            depositAddress: hopWallet.publicKey.toBase58(),
+            hopAta: hopAtaAddress,
+        });
+    } catch (err) {
+        console.error('[DEPOSIT-RELAY] deposit-address error:', err.message);
+        res.status(500).json({ error: 'Failed to get deposit address', details: err.message });
+    }
 });
 
 // Processes a relayed deposit — hop wallet deposits to pool on behalf of user

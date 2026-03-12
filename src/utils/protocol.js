@@ -134,30 +134,21 @@ export async function deposit(wallet, tokenMint, amount, decimals) {
     // Generate Poseidon commitment
     const note = await generateNote()
 
-    // Step 1: Get a hop wallet address from the relayer
+    // Step 1: Get a hop wallet address from the relayer (relayer pre-creates ATA)
     console.log('Requesting deposit address from relayer...')
-    const addrRes = await fetch(`${RELAYER_URL}/relay/deposit-address`)
+    const addrRes = await fetch(`${RELAYER_URL}/relay/deposit-address?tokenMint=${tokenMint}`)
     if (!addrRes.ok) throw new Error('Failed to get deposit address from relayer')
-    const { depositAddress } = await addrRes.json()
-    console.log(`Deposit address: ${depositAddress}`)
+    const { depositAddress, hopAta: hopAtaStr } = await addrRes.json()
+    console.log(`Deposit address: ${depositAddress}, ATA: ${hopAtaStr}`)
 
-    // Step 2: User sends tokens to the hop wallet (simple SPL transfer)
-    const depositPubkey = new PublicKey(depositAddress)
+    // Step 2: User sends tokens to the hop wallet's ATA (simple SPL transfer, no ATA creation needed)
     const userAta = await getAssociatedTokenAddress(mintPubkey, wallet.publicKey, false, tokenProgramId)
-    const hopAta = await getAssociatedTokenAddress(mintPubkey, depositPubkey, true, tokenProgramId)
+    const hopAta = new PublicKey(hopAtaStr)
 
     const { Transaction } = await import('@solana/web3.js')
     const transferTx = new Transaction()
 
-    // Create hop wallet's ATA if it doesn't exist
-    try { await getAccount(connection, hopAta) }
-    catch {
-        transferTx.add(createAssociatedTokenAccountInstruction(
-            wallet.publicKey, hopAta, depositPubkey, mintPubkey, tokenProgramId
-        ))
-    }
-
-    // Transfer tokens from user to hop wallet
+    // Transfer tokens from user to hop wallet (ATA already created by relayer)
     transferTx.add(createTransferCheckedInstruction(
         userAta, mintPubkey, hopAta, wallet.publicKey, rawAmount, actualDecimals, [], tokenProgramId
     ))
