@@ -29,9 +29,9 @@ const PROGRAM_ID = new PublicKey(process.env.PROGRAM_ID || 'EQfV5pm72GfrifQX3LCi
 
 // Delay config (milliseconds)
 const MIN_DELAY_MS = 60_000;     // 1 minute
-const MAX_DELAY_MS = 600_000;    // 10 minutes
-const MIN_HOP_DELAY_MS = 60_000; // 1 min between hops
-const MAX_HOP_DELAY_MS = 180_000; // 3 min between hops
+const MAX_DELAY_MS = 120_000;    // 2 minutes
+const MIN_HOP_DELAY_MS = 10_000; // 10s between hops
+const MAX_HOP_DELAY_MS = 30_000; // 30s between hops
 
 // Padding config
 const PAD_INTERVAL_MS = 180_000;
