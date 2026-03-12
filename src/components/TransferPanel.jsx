@@ -1,9 +1,15 @@
 import { useState, useCallback } from 'react'
+import { useWallet } from '@solana/wallet-adapter-react'
+import { useWalletModal } from '@solana/wallet-adapter-react-ui'
+import { Connection, Transaction } from '@solana/web3.js'
+import { getAssociatedTokenAddress, createTransferCheckedInstruction, createAssociatedTokenAccountInstruction } from '@solana/spl-token'
+import { PublicKey } from '@solana/web3.js'
 import TokenSearchModal from './TokenSearchModal'
 import { generateNote } from '../utils/protocol'
 import { withdraw } from '../utils/protocol'
 
 const RELAYER_URL = import.meta.env.VITE_RELAYER_URL || 'http://localhost:3001'
+const RPC_URL = `https://mainnet.helius-rpc.com/?api-key=${import.meta.env.VITE_HELIUS_API_KEY}`
 
 /** Badge icon with image fallback */
 function BadgeIcon({ token }) {
@@ -18,13 +24,16 @@ function BadgeIcon({ token }) {
 }
 
 function TransferPanel({ selectedToken, setSelectedToken, amount, setAmount, recipient, setRecipient }) {
+    const { publicKey, signTransaction, connected, disconnect } = useWallet()
+    const { setVisible: openWalletModal } = useWalletModal()
+
     const [showTokenModal, setShowTokenModal] = useState(false)
     const [status, setStatus] = useState(null)
     const [tab, setTab] = useState('deposit')
     const [withdrawNote, setWithdrawNote] = useState('')
     const [savedNote, setSavedNote] = useState(null)
     const [depositAddress, setDepositAddress] = useState(null)
-    const [depositStep, setDepositStep] = useState('idle') // idle | generating | address | verifying | done
+    const [depositStep, setDepositStep] = useState('idle') // idle | generating | address | sending | verifying | done
     const [withdrawStep, setWithdrawStep] = useState('idle') // idle | proof | relay | submitting | done
     const [copied, setCopied] = useState(false)
 
@@ -32,7 +41,13 @@ function TransferPanel({ selectedToken, setSelectedToken, amount, setAmount, rec
     const hasRecipient = recipient.length > 30
 
     // Deposit steps definition
-    const depositSteps = [
+    const depositSteps = connected ? [
+        { id: 'select', label: 'SELECT TOKEN & AMOUNT', desc: 'Choose what to deposit' },
+        { id: 'generate', label: 'GENERATE ADDRESS', desc: 'Get a unique deposit address' },
+        { id: 'send', label: 'SEND FROM WALLET', desc: 'Sign transaction in wallet' },
+        { id: 'verify', label: 'VERIFY & DEPOSIT', desc: 'Relayer deposits to pool' },
+        { id: 'note', label: 'SAVE SECRET NOTE', desc: 'Your withdrawal key' },
+    ] : [
         { id: 'select', label: 'SELECT TOKEN & AMOUNT', desc: 'Choose what to deposit' },
         { id: 'generate', label: 'GENERATE ADDRESS', desc: 'Get a unique deposit address' },
         { id: 'send', label: 'SEND TOKENS', desc: 'Transfer from any wallet' },
@@ -52,6 +67,7 @@ function TransferPanel({ selectedToken, setSelectedToken, amount, setAmount, rec
         if (tab === 'deposit') {
             if (depositStep === 'done') return 'note'
             if (depositStep === 'verifying') return 'verify'
+            if (depositStep === 'sending') return 'send'
             if (depositStep === 'address') return 'send'
             if (depositStep === 'generating') return 'generate'
             if (selectedToken && hasAmount) return 'generate'
@@ -105,21 +121,67 @@ function TransferPanel({ selectedToken, setSelectedToken, amount, setAmount, rec
         }
     }, [selectedToken, hasAmount])
 
-    // ---- DEPOSIT: Confirm sent ----
-    const handleConfirmSent = useCallback(async () => {
+    // ---- DEPOSIT: Send from connected wallet ----
+    const handleWalletSend = useCallback(async () => {
+        if (!connected || !publicKey || !depositAddress || !selectedToken) return
+        setDepositStep('sending')
+        setStatus({ type: 'loading', message: 'SENDING FROM WALLET...' })
+
+        try {
+            const connection = new Connection(RPC_URL, 'confirmed')
+            const tokenMint = selectedToken.mint || selectedToken.address
+            const mintPubkey = new PublicKey(tokenMint)
+            const destPubkey = new PublicKey(depositAddress.address)
+
+            // Get decimals
+            const mintInfo = await connection.getAccountInfo(mintPubkey)
+            const decimals = mintInfo ? mintInfo.data[44] : (selectedToken.decimals || 9)
+            const rawAmount = BigInt(Math.floor(parseFloat(amount) * Math.pow(10, decimals)))
+
+            // Get source ATA
+            const sourceAta = await getAssociatedTokenAddress(mintPubkey, publicKey)
+
+            // Get or create dest ATA
+            const destAta = await getAssociatedTokenAddress(mintPubkey, destPubkey)
+
+            const tx = new Transaction()
+
+            // Check if dest ATA exists
+            const destAtaInfo = await connection.getAccountInfo(destAta)
+            if (!destAtaInfo) {
+                tx.add(createAssociatedTokenAccountInstruction(publicKey, destAta, destPubkey, mintPubkey))
+            }
+
+            tx.add(createTransferCheckedInstruction(sourceAta, mintPubkey, destAta, publicKey, rawAmount, decimals))
+
+            tx.feePayer = publicKey
+            tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash
+
+            const signed = await signTransaction(tx)
+            const sig = await connection.sendRawTransaction(signed.serialize())
+            await connection.confirmTransaction(sig, 'confirmed')
+
+            setStatus({ type: 'loading', message: 'TOKENS SENT — VERIFYING DEPOSIT...' })
+            // Auto-trigger confirm
+            await handleConfirmSentInner()
+        } catch (err) {
+            console.error('Wallet send error:', err)
+            setDepositStep('address')
+            setStatus({ type: 'error', message: err.message || 'WALLET SEND FAILED' })
+        }
+    }, [connected, publicKey, depositAddress, selectedToken, amount, signTransaction])
+
+    // ---- DEPOSIT: Confirm sent (inner, shared by both paths) ----
+    const handleConfirmSentInner = useCallback(async () => {
         if (!depositAddress || !selectedToken) return
         setDepositStep('verifying')
         setStatus({ type: 'loading', message: 'VERIFYING TOKENS & DEPOSITING INTO POOL...' })
 
         try {
             const tokenMint = selectedToken.mint || selectedToken.address
-            const mintInfo = await (await fetch(`https://mainnet.helius-rpc.com/?api-key=${import.meta.env.VITE_HELIUS_API_KEY}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getAccountInfo', params: [tokenMint, { encoding: 'base64' }] }),
-            })).json()
-
-            const decimals = mintInfo.result?.value?.data ? Buffer.from(mintInfo.result.value.data[0], 'base64')[44] : (selectedToken.decimals || 9)
+            const connection = new Connection(RPC_URL, 'confirmed')
+            const mintInfo = await connection.getAccountInfo(new PublicKey(tokenMint))
+            const decimals = mintInfo ? mintInfo.data[44] : (selectedToken.decimals || 9)
             const rawAmount = BigInt(Math.floor(parseFloat(amount) * Math.pow(10, decimals))).toString()
 
             const depositRes = await fetch(`${RELAYER_URL}/relay/deposit`, {
@@ -151,6 +213,11 @@ function TransferPanel({ selectedToken, setSelectedToken, amount, setAmount, rec
             setStatus({ type: 'error', message: err.message })
         }
     }, [depositAddress, selectedToken, amount])
+
+    // ---- DEPOSIT: Manual confirm (walletless path) ----
+    const handleConfirmSent = useCallback(async () => {
+        await handleConfirmSentInner()
+    }, [handleConfirmSentInner])
 
     // ---- WITHDRAW ----
     const handleWithdraw = useCallback(async () => {
@@ -200,8 +267,9 @@ function TransferPanel({ selectedToken, setSelectedToken, amount, setAmount, rec
         if (!selectedToken) return 'SELECT A TOKEN'
         if (!amount) return 'ENTER AMOUNT'
         if (tab === 'deposit') {
+            if (depositStep === 'address' && connected) return 'SEND FROM WALLET →'
             if (depositStep === 'address') return 'I\'VE SENT THE TOKENS →'
-            if (depositStep === 'generating' || depositStep === 'verifying') return 'PROCESSING...'
+            if (depositStep === 'generating' || depositStep === 'verifying' || depositStep === 'sending') return 'PROCESSING...'
             if (depositStep === 'done') return 'DEPOSIT COMPLETE ✓'
             return 'GENERATE DEPOSIT ADDRESS →'
         }
@@ -213,6 +281,7 @@ function TransferPanel({ selectedToken, setSelectedToken, amount, setAmount, rec
     const handleAction = () => {
         if (tab === 'deposit') {
             if (depositStep === 'idle') handleGenerateAddress()
+            else if (depositStep === 'address' && connected) handleWalletSend()
             else if (depositStep === 'address') handleConfirmSent()
         } else {
             handleWithdraw()
@@ -220,7 +289,7 @@ function TransferPanel({ selectedToken, setSelectedToken, amount, setAmount, rec
     }
 
     const isDisabled = !selectedToken || !amount ||
-        (tab === 'deposit' && (depositStep === 'generating' || depositStep === 'verifying' || depositStep === 'done')) ||
+        (tab === 'deposit' && (depositStep === 'generating' || depositStep === 'verifying' || depositStep === 'sending' || depositStep === 'done')) ||
         (tab === 'withdraw' && (!withdrawNote || !hasRecipient)) ||
         status?.type === 'loading'
 
@@ -249,6 +318,25 @@ function TransferPanel({ selectedToken, setSelectedToken, amount, setAmount, rec
                             WITHDRAW
                         </button>
                     </div>
+
+                    {/* Optional Wallet Connect — deposit only */}
+                    {tab === 'deposit' && depositStep === 'idle' && (
+                        <div className="wallet-connect-row">
+                            {connected ? (
+                                <>
+                                    <div className="wallet-connected">
+                                        <span className="wallet-dot" />
+                                        <span>{publicKey.toBase58().slice(0, 4)}...{publicKey.toBase58().slice(-4)}</span>
+                                    </div>
+                                    <button className="wallet-disconnect-btn" onClick={disconnect}>DISCONNECT</button>
+                                </>
+                            ) : (
+                                <button className="wallet-connect-btn" onClick={() => openWalletModal(true)}>
+                                    CONNECT WALLET (OPTIONAL)
+                                </button>
+                            )}
+                        </div>
+                    )}
 
                     {/* Token Select */}
                     <div className="form-group">
@@ -291,7 +379,10 @@ function TransferPanel({ selectedToken, setSelectedToken, amount, setAmount, rec
                             <span className="label">DEPOSIT ADDRESS</span>
                             <div className="deposit-address-text">{depositAddress.address}</div>
                             <div className="deposit-address-hint">
-                                {copied ? '✓ COPIED' : `CLICK TO COPY · SEND EXACTLY ${amount} ${selectedToken?.symbol}`}
+                                {copied ? '✓ COPIED' : connected
+                                    ? `CLICK SEND BELOW · ${amount} ${selectedToken?.symbol}`
+                                    : `CLICK TO COPY · SEND EXACTLY ${amount} ${selectedToken?.symbol}`
+                                }
                             </div>
                         </div>
                     )}

@@ -15,8 +15,8 @@ pub const ROOT_HISTORY_SIZE: usize = 5;
 // Fee configuration
 pub const TREASURY: Pubkey = pubkey!("FukM6TdFpsKPEmzjhKAoES7qcuGYq8kGn4ZiByraKzWH");
 pub const RELAYER_WALLET: Pubkey = pubkey!("En5imPirNXRw3T2m1kLy237UWz5FNSKoagu4p7j7KV9M");
-pub const TREASURY_FEE: u64 = 50_000_000;  // 0.05 SOL
-pub const RELAYER_FEE: u64 = 20_000_000;   // 0.02 SOL
+pub const TREASURY_FEE: u64 = 20_000_000;  // 0.02 SOL
+pub const RELAYER_FEE: u64 = 50_000_000;   // 0.05 SOL
 
 #[program]
 pub mod token_cloak {
@@ -57,7 +57,7 @@ pub mod token_cloak {
 
         require!((merkle.next_index as usize) < (1 << TREE_DEPTH), TokenCloakError::MerkleTreeFull);
 
-        // Collect privacy fee: 0.05 SOL to treasury
+        // Collect privacy fee: 0.02 SOL to treasury
         system_program::transfer(
             CpiContext::new(
                 ctx.accounts.system_program.to_account_info(),
@@ -69,7 +69,7 @@ pub mod token_cloak {
             TREASURY_FEE,
         )?;
 
-        // Collect privacy fee: 0.02 SOL to relayer wallet (gas reimbursement)
+        // Collect privacy fee: 0.05 SOL to relayer wallet (gas reimbursement)
         system_program::transfer(
             CpiContext::new(
                 ctx.accounts.system_program.to_account_info(),

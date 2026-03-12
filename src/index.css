@@ -273,6 +273,74 @@ body {
     color: var(--bg);
 }
 
+/* --- Wallet Connect Row --- */
+.wallet-connect-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.6rem 1rem;
+    border: 1px solid var(--border);
+    margin-bottom: 1.25rem;
+    animation: fadeInUp 0.3s ease 0.1s both;
+}
+
+.wallet-connect-btn {
+    width: 100%;
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    font-family: inherit;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    cursor: pointer;
+    padding: 0.3rem 0;
+    transition: color 0.2s ease;
+}
+
+.wallet-connect-btn:hover {
+    color: var(--fg);
+}
+
+.wallet-connected {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+}
+
+.wallet-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+    flex-shrink: 0;
+    animation: pulseGlow 2s ease-in-out infinite;
+}
+
+.wallet-disconnect-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-family: inherit;
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    cursor: pointer;
+    padding: 0.3rem 0.6rem;
+    transition: all 0.2s ease;
+}
+
+.wallet-disconnect-btn:hover {
+    border-color: var(--red);
+    color: var(--red);
+}
+
 /* --- Form Groups --- */
 .form-group {
     margin-bottom: 1.25rem;

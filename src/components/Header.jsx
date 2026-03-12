@@ -5,10 +5,6 @@ function Header() {
                 <img src="/logo.jpg" alt="TokenCloak" className="top-bar-logo" />
                 <span>TOKENCLOAK</span>
             </div>
-            <div className="top-bar-right">
-                <span className="status-dot" />
-                <span>SOLANA MAINNET</span>
-            </div>
         </header>
     )
 }
