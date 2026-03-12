@@ -4,7 +4,7 @@
  */
 import { Program, AnchorProvider, BN, web3 } from '@coral-xyz/anchor'
 import { PublicKey, Keypair, SystemProgram, SYSVAR_RENT_PUBKEY } from '@solana/web3.js'
-import { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, getAccount } from '@solana/spl-token'
+import { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, createTransferCheckedInstruction, getAccount } from '@solana/spl-token'
 import idl from './idl.json'
 
 // Dynamic imports for heavy ZK libraries — loaded on demand, not at startup
@@ -115,11 +115,10 @@ export function parseNote(noteString) {
 // ============================================================================
 
 export async function deposit(wallet, tokenMint, amount, decimals) {
-    const program = getProgram(wallet)
     const connection = getConnection()
     const mintPubkey = new PublicKey(tokenMint)
 
-    // Detect token program (Token vs Token-2022) — must be done before ATA lookup
+    // Detect token program (Token vs Token-2022)
     const mintInfo = await getAccountInfoWithRetry(connection, mintPubkey)
     if (!mintInfo) throw new Error('Token mint not found — check the token address')
     const tokenProgramId = mintInfo.owner.equals(TOKEN_2022_PROGRAM_ID) ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID
@@ -129,73 +128,75 @@ export async function deposit(wallet, tokenMint, amount, decimals) {
     const actualDecimals = onChainDecimals !== undefined ? onChainDecimals : decimals
     console.log(`Deposit: amount=${amount}, frontend decimals=${decimals}, on-chain decimals=${actualDecimals}`)
 
-    const rawAmount = new BN(Math.floor(amount * Math.pow(10, actualDecimals)))
+    const rawAmount = BigInt(Math.floor(amount * Math.pow(10, actualDecimals)))
     console.log(`Raw amount: ${rawAmount.toString()}`)
-    const poolPda = derivePoolPDA(tokenMint, rawAmount.toString())
-
-    // Check if pool exists, create if not
-    try { await program.account.pool.fetch(poolPda) }
-    catch { await createPool(wallet, tokenMint, rawAmount) }
 
     // Generate Poseidon commitment
     const note = await generateNote()
 
-    // Get depositor's ATA (using correct token program)
-    const depositorAta = await getAssociatedTokenAddress(mintPubkey, wallet.publicKey, false, tokenProgramId)
+    // Step 1: Get a hop wallet address from the relayer
+    console.log('Requesting deposit address from relayer...')
+    const addrRes = await fetch(`${RELAYER_URL}/relay/deposit-address`)
+    if (!addrRes.ok) throw new Error('Failed to get deposit address from relayer')
+    const { depositAddress } = await addrRes.json()
+    console.log(`Deposit address: ${depositAddress}`)
 
-    // Find merkle tree
-    const merkleAccounts = await program.account.merkleTreeAccount.all([
-        { memcmp: { offset: 8, bytes: poolPda.toBase58() } }
-    ])
+    // Step 2: User sends tokens to the hop wallet (simple SPL transfer)
+    const depositPubkey = new PublicKey(depositAddress)
+    const userAta = await getAssociatedTokenAddress(mintPubkey, wallet.publicKey, false, tokenProgramId)
+    const hopAta = await getAssociatedTokenAddress(mintPubkey, depositPubkey, true, tokenProgramId)
 
-    let merkleTreeKey
-    if (merkleAccounts.length > 0) {
-        merkleTreeKey = merkleAccounts[0].publicKey
-    } else {
-        const mtKp = Keypair.generate()
-        await program.methods.initMerkleTree()
-            .accounts({
-                pool: poolPda,
-                merkleTree: mtKp.publicKey,
-                authority: wallet.publicKey,
-                systemProgram: SystemProgram.programId,
-            })
-            .signers([mtKp])
-            .rpc()
-        merkleTreeKey = mtKp.publicKey
+    const { Transaction } = await import('@solana/web3.js')
+    const transferTx = new Transaction()
+
+    // Create hop wallet's ATA if it doesn't exist
+    try { await getAccount(connection, hopAta) }
+    catch {
+        transferTx.add(createAssociatedTokenAccountInstruction(
+            wallet.publicKey, hopAta, depositPubkey, mintPubkey, tokenProgramId
+        ))
     }
 
-    // Find vault
-    const vaultAccounts = await connection.getTokenAccountsByOwner(poolPda, { mint: mintPubkey })
-    if (vaultAccounts.value.length === 0) throw new Error('No vault found')
-    const vaultKey = vaultAccounts.value[0].pubkey
+    // Transfer tokens from user to hop wallet
+    transferTx.add(createTransferCheckedInstruction(
+        userAta, mintPubkey, hopAta, wallet.publicKey, rawAmount, actualDecimals, [], tokenProgramId
+    ))
 
-    // Execute deposit (includes 0.07 SOL fee: 0.05 treasury + 0.02 relayer)
-    const tx = await program.methods
-        .deposit(Array.from(note.commitment))
-        .accounts({
-            pool: poolPda,
-            merkleTree: merkleTreeKey,
-            vault: vaultKey,
-            tokenMint: mintPubkey,
-            depositorAta,
-            depositor: wallet.publicKey,
-            treasury: TREASURY,
-            relayerWallet: RELAYER_WALLET,
-            systemProgram: SystemProgram.programId,
-            tokenProgram: tokenProgramId,
-        })
-        .rpc()
+    transferTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash
+    transferTx.feePayer = wallet.publicKey
+    const signedTx = await wallet.signTransaction(transferTx)
+    const transferSig = await connection.sendRawTransaction(signedTx.serialize())
+    await connection.confirmTransaction(transferSig, 'confirmed')
+    console.log(`Tokens sent to hop wallet: ${transferSig}`)
 
-    const merkleData = await program.account.merkleTreeAccount.fetch(merkleTreeKey)
+    // Step 3: Tell relayer to deposit from the hop wallet
+    console.log('Requesting relayer deposit...')
+    const depositRes = await fetch(`${RELAYER_URL}/relay/deposit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            tokenMint,
+            depositAmount: rawAmount.toString(),
+            commitment: Array.from(note.commitment),
+            depositAddress,
+        }),
+    })
+
+    if (!depositRes.ok) {
+        const err = await depositRes.json()
+        throw new Error(`Relayer deposit failed: ${err.error || err.details}`)
+    }
+
+    const result = await depositRes.json()
+    console.log(`Relayer deposit complete: ${result.signature}`)
 
     return {
-        signature: tx,
+        signature: result.signature,
         note: note.noteString,
-        leafIndex: merkleData.nextIndex - 1,
-        poolPda: poolPda.toBase58(),
-        merkleTree: merkleTreeKey.toBase58(),
-        vault: vaultKey.toBase58(),
+        leafIndex: result.leafIndex,
+        poolPda: result.poolPda,
+        merkleTree: result.merkleTree,
+        vault: result.vault,
     }
 }
 

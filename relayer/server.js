@@ -765,6 +765,178 @@ app.get('/health', async (req, res) => {
     }
 });
 
+// ============================================================================
+// Relayer-Mediated Deposit — obscures depositing wallet
+// ============================================================================
+
+// Returns a hop wallet address for the user to send tokens to
+app.get('/relay/deposit-address', (req, res) => {
+    const [hopWallet] = pickRandomHopWallets();
+    res.json({
+        depositAddress: hopWallet.publicKey.toBase58(),
+    });
+});
+
+// Processes a relayed deposit — hop wallet deposits to pool on behalf of user
+app.post('/relay/deposit', limiter, async (req, res) => {
+    try {
+        const { tokenMint, depositAmount, commitment, depositAddress } = req.body;
+
+        if (!tokenMint || !depositAmount || !commitment || !depositAddress) {
+            return res.status(400).json({ error: 'Missing required fields: tokenMint, depositAmount, commitment, depositAddress' });
+        }
+        if (commitment.length !== 32) {
+            return res.status(400).json({ error: 'Commitment must be 32 bytes' });
+        }
+
+        // Verify deposit address is one of our hop wallets
+        const hopWallet = hopWallets.find(kp => kp.publicKey.toBase58() === depositAddress);
+        if (!hopWallet) {
+            return res.status(400).json({ error: 'Invalid deposit address' });
+        }
+
+        const mintPubkey = new PublicKey(tokenMint);
+        const mintInfo = await connection.getAccountInfo(mintPubkey);
+        if (!mintInfo) return res.status(400).json({ error: 'Invalid token mint' });
+        const tokenProgramId = mintInfo.owner.equals(TOKEN_2022_PROGRAM_ID) ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
+
+        const rawAmount = BigInt(depositAmount);
+
+        // Derive pool PDA
+        const amountBuf = Buffer.alloc(8);
+        amountBuf.writeBigUInt64LE(rawAmount);
+        const [poolPda] = PublicKey.findProgramAddressSync(
+            [Buffer.from('pool'), mintPubkey.toBuffer(), amountBuf], PROGRAM_ID
+        );
+
+        // Auto-create pool if needed
+        try {
+            await program.account.pool.fetch(poolPda);
+        } catch {
+            console.log(`[DEPOSIT-RELAY] Creating pool for mint ${tokenMint.slice(0, 8)}... amount ${rawAmount}`);
+            const vaultKp = Keypair.generate();
+            await program.methods.createPool(new BN(rawAmount.toString()))
+                .accounts({
+                    pool: poolPda,
+                    vault: vaultKp.publicKey,
+                    tokenMint: mintPubkey,
+                    authority: relayerKeypair.publicKey,
+                    systemProgram: SystemProgram.programId,
+                    tokenProgram: tokenProgramId,
+                    rent: require('@solana/web3.js').SYSVAR_RENT_PUBKEY,
+                })
+                .signers([vaultKp])
+                .rpc();
+        }
+
+        // Find or create merkle tree
+        const merkleAccounts = await program.account.merkleTreeAccount.all([
+            { memcmp: { offset: 8, bytes: poolPda.toBase58() } }
+        ]);
+
+        let merkleTreeKey;
+        if (merkleAccounts.length > 0) {
+            merkleTreeKey = merkleAccounts[0].publicKey;
+        } else {
+            console.log(`[DEPOSIT-RELAY] Creating merkle tree for pool`);
+            const mtKp = Keypair.generate();
+            await program.methods.initMerkleTree()
+                .accounts({
+                    pool: poolPda,
+                    merkleTree: mtKp.publicKey,
+                    authority: relayerKeypair.publicKey,
+                    systemProgram: SystemProgram.programId,
+                })
+                .signers([mtKp])
+                .rpc();
+            merkleTreeKey = mtKp.publicKey;
+        }
+
+        // Find vault
+        const vaultAccounts = await connection.getTokenAccountsByOwner(poolPda, { mint: mintPubkey });
+        if (vaultAccounts.value.length === 0) {
+            return res.status(500).json({ error: 'No vault found for pool' });
+        }
+        const vaultKey = vaultAccounts.value[0].pubkey;
+
+        // Verify hop wallet has the tokens
+        const hopAta = await getAssociatedTokenAddress(mintPubkey, hopWallet.publicKey, true, tokenProgramId);
+        let hopAcct;
+        try {
+            hopAcct = await getAccount(connection, hopAta);
+        } catch {
+            return res.status(400).json({ error: 'Tokens not yet received at deposit address. Send tokens first, then call this endpoint.' });
+        }
+
+        if (BigInt(hopAcct.amount.toString()) < rawAmount) {
+            return res.status(400).json({
+                error: `Insufficient tokens at deposit address. Expected ${rawAmount}, found ${hopAcct.amount.toString()}`,
+            });
+        }
+
+        // Top up hop wallet with SOL for the deposit fees (0.07 SOL: 0.05 treasury + 0.02 relayer)
+        const hopBalance = await connection.getBalance(hopWallet.publicKey);
+        const neededSol = 80_000_000; // 0.08 SOL (fees + tx cost)
+        if (hopBalance < neededSol) {
+            const topUp = neededSol - hopBalance;
+            console.log(`[DEPOSIT-RELAY] Topping up hop wallet with ${topUp / 1e9} SOL for deposit fees`);
+            const topUpTx = new Transaction().add(
+                SystemProgram.transfer({
+                    fromPubkey: relayerKeypair.publicKey,
+                    toPubkey: hopWallet.publicKey,
+                    lamports: topUp,
+                })
+            );
+            await sendAndConfirmTransaction(connection, topUpTx, [relayerKeypair]);
+        }
+
+        // Execute deposit from hop wallet (hides user's wallet from pool)
+        console.log(`[DEPOSIT-RELAY] Depositing ${rawAmount} tokens from hop ${hopWallet.publicKey.toBase58().slice(0, 8)}... to pool`);
+
+        const DEPOSIT_DISC = Buffer.from([242, 35, 198, 137, 82, 225, 242, 182]);
+        const commitBuf = Buffer.from(commitment);
+        const TREASURY_PK = new PublicKey('FukM6TdFpsKPEmzjhKAoES7qcuGYq8kGn4ZiByraKzWH');
+        const RELAYER_WALLET_PK = new PublicKey('En5imPirNXRw3T2m1kLy237UWz5FNSKoagu4p7j7KV9M');
+
+        const depositIx = new (require('@solana/web3.js').TransactionInstruction)({
+            programId: PROGRAM_ID,
+            keys: [
+                { pubkey: poolPda, isSigner: false, isWritable: true },
+                { pubkey: merkleTreeKey, isSigner: false, isWritable: true },
+                { pubkey: vaultKey, isSigner: false, isWritable: true },
+                { pubkey: mintPubkey, isSigner: false, isWritable: false },
+                { pubkey: hopAta, isSigner: false, isWritable: true },
+                { pubkey: hopWallet.publicKey, isSigner: true, isWritable: true },
+                { pubkey: TREASURY_PK, isSigner: false, isWritable: true },
+                { pubkey: RELAYER_WALLET_PK, isSigner: false, isWritable: true },
+                { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+                { pubkey: tokenProgramId, isSigner: false, isWritable: false },
+            ],
+            data: Buffer.concat([DEPOSIT_DISC, commitBuf]),
+        });
+
+        const depositTx = new Transaction().add(depositIx);
+        const sig = await sendAndConfirmTransaction(connection, depositTx, [hopWallet]);
+        console.log(`[DEPOSIT-RELAY] Deposit complete: ${sig}`);
+
+        // Fetch updated merkle data for leaf index
+        const merkleData = await program.account.merkleTreeAccount.fetch(merkleTreeKey);
+
+        res.json({
+            status: 'deposited',
+            signature: sig,
+            poolPda: poolPda.toBase58(),
+            merkleTree: merkleTreeKey.toBase58(),
+            vault: vaultKey.toBase58(),
+            leafIndex: merkleData.nextIndex - 1,
+        });
+    } catch (err) {
+        console.error('[DEPOSIT-RELAY] Error:', err.message);
+        if (err.logs) console.error('[DEPOSIT-RELAY] Logs:', err.logs.join(' | '));
+        res.status(500).json({ error: 'Deposit relay failed', details: err.message });
+    }
+});
+
 // Prepare endpoint — returns an intermediate address for the ZK proof
 app.post('/relay/prepare', (req, res) => {
     const [hopA] = pickRandomHopWallets();
