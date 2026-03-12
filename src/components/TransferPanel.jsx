@@ -66,15 +66,27 @@ function TransferPanel({ selectedToken, setSelectedToken, amount, setAmount, rec
     const handleWithdraw = useCallback(async () => {
         if (!connected || !selectedToken || !hasAmount || !hasRecipient || !withdrawNote) return
 
-        setStatus({ type: 'loading', message: 'Building withdrawal transaction...' })
+        setStatus({ type: 'loading', message: 'Generating ZK proof...' })
         try {
+            const onProgress = (update) => {
+                if (update.status === 'queued') {
+                    const mins = Math.ceil((update.estimatedCompletionMs || 0) / 60000)
+                    setStatus({ type: 'loading', message: `Privacy delay: ~${mins} min remaining...` })
+                } else if (update.status === 'processing') {
+                    setStatus({ type: 'loading', message: 'Submitting withdrawal...' })
+                } else if (update.status === 'completed') {
+                    setStatus({ type: 'loading', message: 'Confirming on-chain...' })
+                }
+            }
+
             const result = await withdraw(
                 walletAdapter,
                 selectedToken.mint || selectedToken.address,
                 parseFloat(amount),
                 selectedToken.decimals || 9,
                 withdrawNote,
-                recipient
+                recipient,
+                onProgress
             )
 
             setStatus({

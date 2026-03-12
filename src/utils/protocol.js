@@ -14,7 +14,7 @@ async function getSnarkjs() {
     return snarkjsModule
 }
 
-const PROGRAM_ID = new PublicKey('8S2ZM3hqavr7JNwzEEKTXeF5ZXHJyBscfUFYBMTY2fTK')
+const PROGRAM_ID = new PublicKey('EQfV5pm72GfrifQX3LCiRzUf7zZdJ6hS7PbM9o6x6FVs')
 const NETWORK = import.meta.env.VITE_NETWORK || 'mainnet'
 const RPC_URL = NETWORK === 'mainnet'
     ? `https://mainnet.helius-rpc.com/?api-key=${import.meta.env.VITE_HELIUS_API_KEY}`
@@ -194,7 +194,7 @@ export async function deposit(wallet, tokenMint, amount, decimals) {
 // Withdraw (with real ZK proof generation)
 // ============================================================================
 
-export async function withdraw(wallet, tokenMint, depositAmount, decimals, noteString, recipientAddress) {
+export async function withdraw(wallet, tokenMint, depositAmount, decimals, noteString, recipientAddress, onProgress) {
     const program = getProgram(wallet)
     const connection = getConnection()
     const poseidon = await getPoseidon()
@@ -294,8 +294,53 @@ export async function withdraw(wallet, tokenMint, depositAmount, decimals, noteS
         throw new Error(errData.error || errData.details || `Relayer error: ${response.status}`)
     }
 
-    const result = await response.json()
-    return { signature: result.signature, recipient: recipientAddress }
+    const queueResult = await response.json()
+    const { jobId, estimatedCompletionMs } = queueResult
+    console.log(`Withdrawal queued: ${jobId}, est. delay: ${Math.round(estimatedCompletionMs / 60000)} min`)
+
+    // Poll for completion
+    if (onProgress) onProgress({ status: 'queued', jobId, estimatedCompletionMs })
+
+    const signature = await pollRelayerStatus(jobId, onProgress)
+    return { signature, recipient: recipientAddress }
+}
+
+// ============================================================================
+// Relayer Polling
+// ============================================================================
+
+async function pollRelayerStatus(jobId, onProgress) {
+    const POLL_INTERVAL = 5000 // 5 seconds
+    const MAX_POLLS = 150       // 12.5 minutes max
+
+    for (let i = 0; i < MAX_POLLS; i++) {
+        await new Promise(r => setTimeout(r, POLL_INTERVAL))
+
+        const res = await fetch(`${RELAYER_URL}/status/${jobId}`)
+        if (!res.ok) throw new Error('Failed to check withdrawal status')
+
+        const data = await res.json()
+
+        if (data.status === 'completed') {
+            if (onProgress) onProgress({ status: 'completed', signature: data.signature })
+            return data.signature
+        }
+
+        if (data.status === 'failed') {
+            throw new Error(data.error || 'Withdrawal failed')
+        }
+
+        // Still queued or processing
+        if (onProgress) {
+            onProgress({
+                status: data.status,
+                jobId,
+                estimatedWaitMs: data.estimatedWaitMs || 0,
+            })
+        }
+    }
+
+    throw new Error('Withdrawal timed out')
 }
 
 // ============================================================================

@@ -7,7 +7,7 @@ use solana_poseidon::{hashv, PoseidonHash, Endianness, Parameters};
 mod verifying_key;
 use verifying_key::VERIFYING_KEY;
 
-declare_id!("8S2ZM3hqavr7JNwzEEKTXeF5ZXHJyBscfUFYBMTY2fTK");
+declare_id!("EQfV5pm72GfrifQX3LCiRzUf7zZdJ6hS7PbM9o6x6FVs");
 
 pub const TREE_DEPTH: usize = 5;
 pub const ROOT_HISTORY_SIZE: usize = 5;
@@ -102,6 +102,20 @@ pub mod token_cloak {
 
         emit!(DepositEvent { commitment, leaf_index, timestamp: Clock::get()?.unix_timestamp });
         msg!("Deposit #{} | Fee: {} lamports", leaf_index, TREASURY_FEE + RELAYER_FEE);
+        Ok(())
+    }
+
+    /// Pad the Merkle tree with a random commitment (no token transfer).
+    /// Only callable by the relayer. Creates unwithdrawable entries
+    /// that inflate the anonymity set.
+    pub fn pad_tree(ctx: Context<PadTree>, commitment: [u8; 32]) -> Result<()> {
+        let merkle = &mut ctx.accounts.merkle_tree;
+        require!((merkle.next_index as usize) < (1 << TREE_DEPTH), TokenCloakError::MerkleTreeFull);
+
+        let leaf_index = merkle.next_index;
+        insert_leaf(merkle, commitment)?;
+
+        msg!("Pad #{}", leaf_index);
         Ok(())
     }
 
@@ -345,6 +359,14 @@ pub struct InitMerkleTree<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
     pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct PadTree<'info> {
+    #[account(mut)]
+    pub merkle_tree: Box<Account<'info, MerkleTreeAccount>>,
+    #[account(constraint = relayer.key() == RELAYER_WALLET)]
+    pub relayer: Signer<'info>,
 }
 
 #[derive(Accounts)]

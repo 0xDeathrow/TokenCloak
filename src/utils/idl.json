@@ -1,5 +1,5 @@
 {
-  "address": "8S2ZM3hqavr7JNwzEEKTXeF5ZXHJyBscfUFYBMTY2fTK",
+  "address": "EQfV5pm72GfrifQX3LCiRzUf7zZdJ6hS7PbM9o6x6FVs",
   "metadata": {
     "name": "token_cloak",
     "version": "0.1.0",
@@ -197,6 +197,45 @@
         }
       ],
       "args": []
+    },
+    {
+      "name": "pad_tree",
+      "docs": [
+        "Pad the Merkle tree with a random commitment (no token transfer).",
+        "Only callable by the relayer. Creates unwithdrawable entries",
+        "that inflate the anonymity set."
+      ],
+      "discriminator": [
+        152,
+        196,
+        33,
+        90,
+        172,
+        134,
+        150,
+        3
+      ],
+      "accounts": [
+        {
+          "name": "merkle_tree",
+          "writable": true
+        },
+        {
+          "name": "relayer",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "commitment",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "withdraw",
