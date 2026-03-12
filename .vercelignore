@@ -1,0 +1,7 @@
+node_modules
+anchor
+circuits
+relayer
+.env
+*.json.bak
+test_*.cjs

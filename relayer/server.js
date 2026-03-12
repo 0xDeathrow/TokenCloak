@@ -32,9 +32,14 @@ const MAX_DELAY_MS = 600_000;    // 10 minutes
 const PAD_INTERVAL_MS = 180_000; // Pad every 3 minutes
 const PAD_ENABLED = process.env.PAD_ENABLED !== 'false';
 
-// Load relayer keypair
-const keypairPath = process.env.KEYPAIR_PATH || path.join(__dirname, 'relayer-keypair.json');
-const keypairData = JSON.parse(fs.readFileSync(keypairPath, 'utf8'));
+// Load relayer keypair (from env var or file)
+let keypairData;
+if (process.env.RELAYER_KEY) {
+    keypairData = JSON.parse(process.env.RELAYER_KEY);
+} else {
+    const keypairPath = process.env.KEYPAIR_PATH || path.join(__dirname, 'relayer-keypair.json');
+    keypairData = JSON.parse(fs.readFileSync(keypairPath, 'utf8'));
+}
 const relayerKeypair = Keypair.fromSecretKey(new Uint8Array(keypairData));
 console.log(`Relayer wallet: ${relayerKeypair.publicKey.toBase58()}`);
 
