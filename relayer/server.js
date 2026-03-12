@@ -28,10 +28,10 @@ if (!RPC_URL) { console.error('RPC_URL env var is required'); process.exit(1); }
 const PROGRAM_ID = new PublicKey(process.env.PROGRAM_ID || 'EQfV5pm72GfrifQX3LCiRzUf7zZdJ6hS7PbM9o6x6FVs');
 
 // Delay config (milliseconds)
-const MIN_DELAY_MS = 60_000;     // 1 minute
-const MAX_DELAY_MS = 120_000;    // 2 minutes
-const MIN_HOP_DELAY_MS = 10_000; // 10s between hops
-const MAX_HOP_DELAY_MS = 30_000; // 30s between hops
+const MIN_DELAY_MS = 30_000;     // 30 seconds
+const MAX_DELAY_MS = 60_000;     // 1 minute
+const MIN_HOP_DELAY_MS = 3_000;  // 3s between hops
+const MAX_HOP_DELAY_MS = 8_000;  // 8s between hops
 
 // Padding config
 const PAD_INTERVAL_MS = 180_000;
