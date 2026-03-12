@@ -859,18 +859,22 @@ app.post('/relay/deposit', limiter, async (req, res) => {
         }
         const vaultKey = vaultAccounts.value[0].pubkey;
 
-        // Verify hop wallet has the tokens
+        // Verify hop wallet has the tokens (retry for RPC propagation delay)
         const hopAta = await getAssociatedTokenAddress(mintPubkey, hopWallet.publicKey, true, tokenProgramId);
-        let hopAcct;
-        try {
-            hopAcct = await getAccount(connection, hopAta);
-        } catch {
-            return res.status(400).json({ error: 'Tokens not yet received at deposit address. Send tokens first, then call this endpoint.' });
+        let hopAcct = null;
+        for (let attempt = 0; attempt < 10; attempt++) {
+            try {
+                hopAcct = await getAccount(connection, hopAta);
+                if (BigInt(hopAcct.amount.toString()) >= rawAmount) break;
+            } catch { /* ATA not created yet */ }
+            console.log(`[DEPOSIT-RELAY] Waiting for tokens at hop wallet (attempt ${attempt + 1}/10)...`);
+            await new Promise(r => setTimeout(r, 2000));
+            hopAcct = null;
         }
 
-        if (BigInt(hopAcct.amount.toString()) < rawAmount) {
+        if (!hopAcct || BigInt(hopAcct.amount.toString()) < rawAmount) {
             return res.status(400).json({
-                error: `Insufficient tokens at deposit address. Expected ${rawAmount}, found ${hopAcct.amount.toString()}`,
+                error: `Tokens not received after 20s. Expected ${rawAmount} at ${depositAddress}`,
             });
         }
 
