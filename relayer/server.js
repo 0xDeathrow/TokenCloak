@@ -552,10 +552,78 @@ async function processWithdrawal(jobId) {
         const sigFinal = await sendAndConfirmTransaction(connection, releaseTx, [relayerKeypair]);
         console.log(`[RELEASE] Done: ${sigFinal} — ${recipientAmount} tokens to ${finalRecipient.slice(0, 8)}... (skim: ${skimAmount} kept in noise pool)`);
 
+        // ===== STEP 8: Post-Release Decoys — exit vault sends noise to random wallets =====
+        // This creates outgoing exit vault transactions that look identical to the real withdrawal
+        job.status = 'decoy-phase';
+        try {
+            const exitAcctInfo = await getAccount(connection, exitTokenAccount);
+            const availableNoise = BigInt(exitAcctInfo.amount.toString());
+            if (availableNoise > 0n) {
+                // Create 2-4 decoy transactions with amounts similar to the real release
+                const numDecoys = 2 + Math.floor(Math.random() * 3);
+                const decoyAmounts = splitIntoBlocks(
+                    availableNoise > recipientAmount ? recipientAmount : availableNoise,
+                    numDecoys
+                );
+
+                console.log(`[DECOY] Sending ${numDecoys} decoy transactions from exit vault (${decoyAmounts.map(a => a.toString()).join(', ')})`);
+
+                for (let d = 0; d < numDecoys; d++) {
+                    if (decoyAmounts[d] <= 0n) continue;
+                    const decoyWallet = Keypair.generate();
+                    // Fund decoy wallet for gas
+                    const fundTx = new Transaction().add(
+                        SystemProgram.transfer({
+                            fromPubkey: relayerKeypair.publicKey,
+                            toPubkey: decoyWallet.publicKey,
+                            lamports: EPHEMERAL_SOL_FUND,
+                        })
+                    );
+                    await sendAndConfirmTransaction(connection, fundTx, [relayerKeypair]);
+
+                    // Exit vault → decoy wallet (looks like a real withdrawal)
+                    const decoyAta = await getAssociatedTokenAddress(mintPubkey, decoyWallet.publicKey, true, tokenProgramId);
+                    const RELEASE_DISC = Buffer.from([35, 55, 129, 211, 18, 67, 16, 112]);
+                    const decoyBuf = Buffer.alloc(8);
+                    decoyBuf.writeBigUInt64LE(decoyAmounts[d]);
+                    const decoyReleaseIx = new (require('@solana/web3.js').TransactionInstruction)({
+                        programId: PROGRAM_ID,
+                        keys: [
+                            { pubkey: exitVaultPda, isSigner: false, isWritable: false },
+                            { pubkey: exitTokenAccount, isSigner: false, isWritable: true },
+                            { pubkey: mintPubkey, isSigner: false, isWritable: false },
+                            { pubkey: decoyWallet.publicKey, isSigner: false, isWritable: false },
+                            { pubkey: decoyAta, isSigner: false, isWritable: true },
+                            { pubkey: relayerKeypair.publicKey, isSigner: true, isWritable: false },
+                            { pubkey: tokenProgramId, isSigner: false, isWritable: false },
+                        ],
+                        data: Buffer.concat([RELEASE_DISC, decoyBuf]),
+                    });
+                    const decoyReleaseTx = new Transaction();
+                    decoyReleaseTx.add(createAssociatedTokenAccountInstruction(relayerKeypair.publicKey, decoyAta, decoyWallet.publicKey, mintPubkey, tokenProgramId));
+                    decoyReleaseTx.add(decoyReleaseIx);
+
+                    const delay = getHopDelay();
+                    await new Promise(r => setTimeout(r, delay));
+                    await sendAndConfirmTransaction(connection, decoyReleaseTx, [relayerKeypair]);
+                    console.log(`[DECOY] ${d + 1}/${numDecoys}: Exit Vault → ${decoyWallet.publicKey.toBase58().slice(0, 8)}... (${decoyAmounts[d]} tokens)`);
+
+                    // Decoy wallet sends tokens BACK to exit vault (returns noise to pool)
+                    const returnTx = new Transaction();
+                    returnTx.add(createTransferInstruction(decoyAta, exitTokenAccount, decoyWallet.publicKey, decoyAmounts[d], [], tokenProgramId));
+                    returnTx.add(createCloseAccountInstruction(decoyAta, relayerKeypair.publicKey, decoyWallet.publicKey, [], tokenProgramId));
+                    await sendAndConfirmTransaction(connection, returnTx, [decoyWallet]);
+                }
+                console.log(`[DECOY] Done — ${numDecoys} decoy outgoing txns from exit vault`);
+            }
+        } catch (e) {
+            console.log(`[DECOY] Skipped decoys: ${e.message}`);
+        }
+
         job.status = 'completed';
         job.signature = sigFinal;
         job.hops = [tx1, ...scatterSigs, sigFinal];
-        console.log(`[RELAY] Job ${jobId} completed via ${allBlocks.length}-block split + noise injection`);
+        console.log(`[RELAY] Job ${jobId} completed via ${allBlocks.length}-block split + noise + decoys`);
     } catch (err) {
         job.status = 'failed';
         const errMsg = err.message || err.toString();
