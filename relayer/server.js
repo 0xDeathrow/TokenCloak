@@ -14,7 +14,7 @@ const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
 const { Connection, Keypair, PublicKey, SystemProgram, Transaction, sendAndConfirmTransaction } = require('@solana/web3.js');
 const { Program, AnchorProvider, Wallet, BN } = require('@coral-xyz/anchor');
-const { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, createTransferInstruction, getAccount, createCloseAccountInstruction } = require('@solana/spl-token');
+const { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, createTransferCheckedInstruction, getAccount, createCloseAccountInstruction } = require('@solana/spl-token');
 const fs = require('fs');
 const path = require('path');
 
@@ -122,7 +122,7 @@ function pickRandomHopWallets() {
 // SPL Token Transfer Helper
 // ============================================================================
 
-async function transferSPLTokens(fromKeypair, toPublicKey, mintPubkey, amount, tokenProgramId) {
+async function transferSPLTokens(fromKeypair, toPublicKey, mintPubkey, amount, tokenProgramId, decimals) {
     const fromAta = await getAssociatedTokenAddress(mintPubkey, fromKeypair.publicKey, true, tokenProgramId);
     const toAta = await getAssociatedTokenAddress(mintPubkey, toPublicKey, true, tokenProgramId);
 
@@ -137,9 +137,9 @@ async function transferSPLTokens(fromKeypair, toPublicKey, mintPubkey, amount, t
         await sendAndConfirmTransaction(connection, createAtaTx, [relayerKeypair]);
     }
 
-    // Transfer tokens (separate tx, only from wallet signs)
+    // Transfer tokens using TransferChecked (works with both Token-1 and Token-2022)
     const tx = new Transaction();
-    tx.add(createTransferInstruction(fromAta, toAta, fromKeypair.publicKey, amount, [], tokenProgramId));
+    tx.add(createTransferCheckedInstruction(fromAta, mintPubkey, toAta, fromKeypair.publicKey, amount, decimals, [], tokenProgramId));
     const sig = await sendAndConfirmTransaction(connection, tx, [fromKeypair]);
     return sig;
 }
@@ -156,10 +156,10 @@ const NOISE_LOOP_MIN = 2; // min extra noise bounces
 const NOISE_LOOP_MAX = 3; // max extra noise bounces
 
 // Transfer directly to a specific token account (not derived ATA)
-async function transferToTokenAccount(fromKeypair, fromMint, toTokenAccount, amount, tokenProgramId) {
+async function transferToTokenAccount(fromKeypair, fromMint, toTokenAccount, amount, tokenProgramId, decimals) {
     const fromAta = await getAssociatedTokenAddress(fromMint, fromKeypair.publicKey, true, tokenProgramId);
     const tx = new Transaction();
-    tx.add(createTransferInstruction(fromAta, toTokenAccount, fromKeypair.publicKey, amount, [], tokenProgramId));
+    tx.add(createTransferCheckedInstruction(fromAta, fromMint, toTokenAccount, fromKeypair.publicKey, amount, decimals, [], tokenProgramId));
     return await sendAndConfirmTransaction(connection, tx, [fromKeypair]);
 }
 
@@ -421,7 +421,7 @@ async function processWithdrawal(jobId) {
             const delay = getHopDelay();
             console.log(`[SCATTER] Block ${i + 1}/${allBlocks.length} (${block.type}): ${block.amt} tokens → Eph ${eph.publicKey.toBase58().slice(0, 8)}... (delay ${Math.round(delay / 1000)}s)`);
             await new Promise(r => setTimeout(r, delay));
-            const sig = await transferSPLTokens(hopA, eph.publicKey, mintPubkey, block.amt, tokenProgramId);
+            const sig = await transferSPLTokens(hopA, eph.publicKey, mintPubkey, block.amt, tokenProgramId, onChainDecimals);
             scatterSigs.push(sig);
         }
         console.log(`[SCATTER] Done. ${scatterSigs.length} scatter transfers`);
@@ -431,7 +431,7 @@ async function processWithdrawal(jobId) {
             console.log(`[SKIM] Sending ${skimAmount} skim tokens from Hop A → Exit Vault`);
             const hopAAta = await getAssociatedTokenAddress(mintPubkey, hopA.publicKey, true, tokenProgramId);
             const skimTx = new Transaction();
-            skimTx.add(createTransferInstruction(hopAAta, exitTokenAccount, hopA.publicKey, skimAmount, [], tokenProgramId));
+            skimTx.add(createTransferCheckedInstruction(hopAAta, mintPubkey, exitTokenAccount, hopA.publicKey, skimAmount, onChainDecimals, [], tokenProgramId));
             await sendAndConfirmTransaction(connection, skimTx, [hopA]);
         }
 
@@ -462,7 +462,7 @@ async function processWithdrawal(jobId) {
             const delay = getHopDelay();
             console.log(`[SHUFFLE] Block ${i + 1}: Eph ${fromEph.publicKey.toBase58().slice(0, 8)}... → Shuffle ${toShuffle.publicKey.toBase58().slice(0, 8)}... (delay ${Math.round(delay / 1000)}s)`);
             await new Promise(r => setTimeout(r, delay));
-            await transferSPLTokens(fromEph, toShuffle.publicKey, mintPubkey, block.amt, tokenProgramId);
+            await transferSPLTokens(fromEph, toShuffle.publicKey, mintPubkey, block.amt, tokenProgramId, onChainDecimals);
         }
         console.log(`[SHUFFLE] Done`);
 
@@ -512,7 +512,7 @@ async function processWithdrawal(jobId) {
                     const delay = getHopDelay();
                     console.log(`[NOISE-LOOP] Round ${round + 1}/${loopCount}: ${block.amt} tokens ${from.publicKey.toBase58().slice(0, 8)}... → ${to.publicKey.toBase58().slice(0, 8)}... (delay ${Math.round(delay / 1000)}s)`);
                     await new Promise(r => setTimeout(r, delay));
-                    await transferSPLTokens(from, to.publicKey, mintPubkey, block.amt, tokenProgramId);
+                    await transferSPLTokens(from, to.publicKey, mintPubkey, block.amt, tokenProgramId, onChainDecimals);
                 }
 
                 // Close previous holders' token accounts to reclaim SOL
@@ -546,7 +546,7 @@ async function processWithdrawal(jobId) {
             await new Promise(r => setTimeout(r, delay));
             const shuffleAta = await getAssociatedTokenAddress(mintPubkey, shuffleKp.publicKey, true, tokenProgramId);
             const cvgTx = new Transaction();
-            cvgTx.add(createTransferInstruction(shuffleAta, exitTokenAccount, shuffleKp.publicKey, block.amt, [], tokenProgramId));
+            cvgTx.add(createTransferCheckedInstruction(shuffleAta, mintPubkey, exitTokenAccount, shuffleKp.publicKey, block.amt, onChainDecimals, [], tokenProgramId));
             await sendAndConfirmTransaction(connection, cvgTx, [shuffleKp]);
 
             // Close shuffle wallet token account to reclaim rent SOL
@@ -690,7 +690,7 @@ async function processWithdrawal(jobId) {
 
                 // Return decoy tokens to exit vault + close account
                 const returnTx = new Transaction();
-                returnTx.add(createTransferInstruction(decoyAta, exitTokenAccount, entry.keypair.publicKey, entry.amount, [], tokenProgramId));
+                returnTx.add(createTransferCheckedInstruction(decoyAta, mintPubkey, exitTokenAccount, entry.keypair.publicKey, entry.amount, onChainDecimals, [], tokenProgramId));
                 returnTx.add(createCloseAccountInstruction(decoyAta, relayerKeypair.publicKey, entry.keypair.publicKey, [], tokenProgramId));
                 await sendAndConfirmTransaction(connection, returnTx, [entry.keypair]);
             }
