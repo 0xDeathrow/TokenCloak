@@ -222,6 +222,17 @@ export async function withdraw(wallet, tokenMint, depositAmount, decimals, noteS
     const rawAmount = new BN(Math.floor(depositAmount * Math.pow(10, actualDecimals)))
     const poolPda = derivePoolPDA(tokenMint, rawAmount.toString())
 
+    // === Step 1: Get intermediate address from relayer ===
+    console.log('Requesting intermediate address from relayer...')
+    const prepareRes = await fetch(`${RELAYER_URL}/relay/prepare`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+    })
+    if (!prepareRes.ok) throw new Error('Failed to get relay intermediate address')
+    const { intermediateAddress } = await prepareRes.json()
+    const intermediatePubkey = new PublicKey(intermediateAddress)
+    console.log(`Using intermediate: ${intermediateAddress.slice(0, 8)}...`)
+
     // Parse note
     const { nullifier, secret } = parseNote(noteString)
 
@@ -243,18 +254,17 @@ export async function withdraw(wallet, tokenMint, depositAmount, decimals, noteS
     const rootIndex = merkleData.currentRootIndex
     const root = Array.from(merkleData.roots[rootIndex])
 
-    // Build Merkle proof — reconstruct the tree from on-chain events
+    // Build Merkle proof
     const { pathElements, pathIndices, leafIndex } = await buildMerkleProof(
         program, poolPda, merkleTreeKey, commitmentBytes, poseidon
     )
 
-    // Compute recipient field element (must reduce mod BN254 scalar field order r)
-    // The circuit reduces large inputs mod r, so we must pass the reduced value on-chain too
+    // === Step 2: Generate ZK proof with INTERMEDIATE address as recipient ===
+    // This means the on-chain withdraw goes to the relay wallet, not the user
     const BN254_R = BigInt('21888242871839275222246405745257275088548364400416034343698204186575808495617')
-    const recipientBigInt = bufToBigInt(recipientPubkey.toBytes()) % BN254_R
+    const recipientBigInt = bufToBigInt(intermediatePubkey.toBytes()) % BN254_R
     const recipientField = Array.from(bigIntToBytes32BE(recipientBigInt))
 
-    // Generate real Groth16 proof using snarkjs
     console.log('Generating ZK proof...')
     const snarkjs = await getSnarkjs()
     const input = {
@@ -273,7 +283,7 @@ export async function withdraw(wallet, tokenMint, depositAmount, decimals, noteS
         '/zk/withdraw_final.zkey'
     )
 
-    // Pack proof into 256 bytes (a:64, b:128, c:64)
+    // Pack proof into 256 bytes
     const proofBytes = packProof(proof)
 
     // Find vault
@@ -281,10 +291,8 @@ export async function withdraw(wallet, tokenMint, depositAmount, decimals, noteS
     if (vaultAccounts.value.length === 0) throw new Error('No vault found')
     const vaultKey = vaultAccounts.value[0].pubkey
 
-    // (tokenProgramId already detected above)
-
-    // Submit withdrawal via relayer (user's wallet never signs)
-    console.log('Submitting to relayer...')
+    // === Step 3: Submit to relayer with intermediate + final recipient ===
+    console.log('Submitting to relayer (multi-hop)...')
     const response = await fetch(`${RELAYER_URL}/relay`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -295,7 +303,8 @@ export async function withdraw(wallet, tokenMint, depositAmount, decimals, noteS
             root: Array.from(root),
             nullifierHash: Array.from(nullifierHashBytes),
             recipientField: recipientField,
-            recipientAddress: recipientAddress,
+            intermediateAddress: intermediateAddress,
+            finalRecipient: recipientAddress,
         }),
     })
 

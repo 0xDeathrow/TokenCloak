@@ -45,3 +45,4 @@ circuits/withdraw_cpp/
 circuits/withdraw_js/
 circuits/withdraw_final.zkey
 .vercel
+hop*-keypair.json
