@@ -181,9 +181,10 @@ async function processWithdrawal(jobId) {
         const mintInfo = await connection.getAccountInfo(mintPubkey);
         const tokenProgramId = mintInfo.owner.equals(TOKEN_2022_PROGRAM_ID) ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
 
-        // Get on-chain decimals to calculate raw token amount
+        // depositAmount is already in raw on-chain units (e.g. 1000000000 for 1000 tokens with 6 decimals)
+        // The on-chain withdraw sends pool.deposit_amount which matches this value
         const onChainDecimals = mintInfo.data[44];
-        const rawTokenAmount = BigInt(depositAmount) * BigInt(Math.pow(10, onChainDecimals));
+        const rawTokenAmount = BigInt(depositAmount);
 
         // Get or create intermediate wallet ATA
         const intermediateAta = await getAssociatedTokenAddress(mintPubkey, intermediatePubkey, false, tokenProgramId);
