@@ -123,8 +123,8 @@ function pickRandomHopWallets() {
 // ============================================================================
 
 async function transferSPLTokens(fromKeypair, toPublicKey, mintPubkey, amount, tokenProgramId) {
-    const fromAta = await getAssociatedTokenAddress(mintPubkey, fromKeypair.publicKey, false, tokenProgramId);
-    const toAta = await getAssociatedTokenAddress(mintPubkey, toPublicKey, false, tokenProgramId);
+    const fromAta = await getAssociatedTokenAddress(mintPubkey, fromKeypair.publicKey, true, tokenProgramId);
+    const toAta = await getAssociatedTokenAddress(mintPubkey, toPublicKey, true, tokenProgramId);
 
     const tx = new Transaction();
 
