@@ -1,6 +1,6 @@
 /* ============================================
    TokenCloak Design System
-   Brutalist Black & White — Large Blocky Feel
+   Brutalist Black & White — Compact + Animated
    ============================================ */
 
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
@@ -45,30 +45,136 @@ body {
     flex-direction: column;
 }
 
+/* ============ ANIMATIONS ============ */
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(16px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes slideInLeft {
+    from {
+        opacity: 0;
+        transform: translateX(-30px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@keyframes slideInRight {
+    from {
+        opacity: 0;
+        transform: translateX(20px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@keyframes scaleIn {
+    from {
+        opacity: 0;
+        transform: scale(0.95);
+    }
+
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+@keyframes borderPulse {
+
+    0%,
+    100% {
+        border-color: var(--border);
+    }
+
+    50% {
+        border-color: var(--fg);
+    }
+}
+
+@keyframes shimmer {
+    0% {
+        background-position: -200% 0;
+    }
+
+    100% {
+        background-position: 200% 0;
+    }
+}
+
+@keyframes pulseGlow {
+
+    0%,
+    100% {
+        box-shadow: 0 0 0 0 rgba(0, 255, 102, 0);
+    }
+
+    50% {
+        box-shadow: 0 0 12px 2px rgba(0, 255, 102, 0.15);
+    }
+}
+
 /* --- Top Bar --- */
 .top-bar {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 1.25rem 2rem;
+    padding: 0.75rem 2rem;
     border-bottom: 1px solid var(--border);
     font-weight: 800;
-    font-size: 0.85rem;
+    font-size: 0.8rem;
     letter-spacing: 0.05em;
     flex-shrink: 0;
+    animation: fadeIn 0.4s ease both;
 }
 
 .top-bar-left {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
 }
 
 .top-bar-logo {
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    height: 28px;
     border-radius: 4px;
     object-fit: cover;
+    transition: transform 0.3s ease;
+}
+
+.top-bar-logo:hover {
+    transform: rotate(-8deg) scale(1.1);
 }
 
 .top-bar-right {
@@ -76,7 +182,7 @@ body {
     align-items: center;
     gap: 8px;
     color: var(--muted);
-    font-size: 0.75rem;
+    font-size: 0.7rem;
 }
 
 .status-dot {
@@ -84,33 +190,35 @@ body {
     height: 6px;
     border-radius: 50%;
     background: var(--green);
+    animation: pulseGlow 2s ease-in-out infinite;
 }
 
 /* --- Main Grid --- */
 .main-grid {
     display: grid;
-    grid-template-columns: 1fr 400px;
+    grid-template-columns: 1fr 360px;
     flex-grow: 1;
     overflow: hidden;
 }
 
 /* --- Action Panel (Left) --- */
 .action-panel {
-    padding: 3rem 4rem;
+    padding: 1.5rem 3rem 1.5rem;
     display: flex;
     flex-direction: column;
     border-right: 1px solid var(--border);
-    overflow-y: auto;
+    overflow: hidden;
 }
 
 /* Large Title */
 .panel-title {
     font-family: var(--font-display);
-    font-size: clamp(5rem, 9vw, 10rem);
-    line-height: 0.85;
+    font-size: clamp(3.5rem, 7vw, 7rem);
+    line-height: 0.9;
     letter-spacing: -0.02em;
-    margin-bottom: 2rem;
+    margin-bottom: 1.25rem;
     font-weight: 400;
+    animation: slideInLeft 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 /* --- Tabs --- */
@@ -120,24 +228,43 @@ body {
     gap: 1px;
     background-color: var(--border);
     border: 1px solid var(--border);
-    margin-bottom: 3rem;
+    margin-bottom: 1.5rem;
+    animation: fadeInUp 0.4s ease 0.1s both;
 }
 
 .tab {
     background-color: var(--bg);
     color: var(--fg);
     border: none;
-    padding: 1.5rem;
+    padding: 1rem;
     font-family: inherit;
     font-weight: 800;
-    font-size: 1rem;
+    font-size: 0.85rem;
     letter-spacing: 0.05em;
     cursor: pointer;
     text-transform: inherit;
-    transition: background-color var(--transition);
+    transition: all 0.25s ease;
+    position: relative;
+    overflow: hidden;
 }
 
-.tab:hover {
+.tab::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    width: 0;
+    height: 2px;
+    background: var(--fg);
+    transition: all 0.3s ease;
+    transform: translateX(-50%);
+}
+
+.tab:hover:not(.active)::after {
+    width: 60%;
+}
+
+.tab:hover:not(.active) {
     background-color: var(--hover);
 }
 
@@ -148,7 +275,24 @@ body {
 
 /* --- Form Groups --- */
 .form-group {
-    margin-bottom: 2.5rem;
+    margin-bottom: 1.25rem;
+    animation: fadeInUp 0.4s ease both;
+}
+
+.form-group:nth-child(3) {
+    animation-delay: 0.15s;
+}
+
+.form-group:nth-child(4) {
+    animation-delay: 0.2s;
+}
+
+.form-group:nth-child(5) {
+    animation-delay: 0.25s;
+}
+
+.form-group:nth-child(6) {
+    animation-delay: 0.3s;
 }
 
 .form-header {
@@ -158,12 +302,13 @@ body {
 }
 
 .label {
-    font-size: 0.75rem;
+    font-size: 0.7rem;
     font-weight: 800;
     letter-spacing: 0.1em;
     color: var(--muted);
     display: block;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.4rem;
+    transition: color 0.2s ease;
 }
 
 /* --- Control Boxes --- */
@@ -172,62 +317,69 @@ body {
     background: transparent;
     border: 1px solid var(--border);
     color: var(--fg);
-    padding: 1.5rem;
+    padding: 1rem 1.25rem;
     font-family: inherit;
     font-weight: 700;
-    font-size: 1.25rem;
+    font-size: 1rem;
     text-transform: inherit;
     outline: none;
     display: flex;
     justify-content: space-between;
     align-items: center;
     cursor: pointer;
-    transition: border-color var(--transition);
+    transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.15s ease;
 }
 
-.control-box:hover,
+.control-box:hover {
+    border-color: var(--fg);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
 .control-box:focus-within {
     border-color: var(--fg);
+    box-shadow: 0 0 20px rgba(255, 255, 255, 0.03);
 }
 
 input.control-box {
     cursor: text;
-    font-size: 3rem;
-    padding: 1rem 1.5rem;
+    font-size: 2rem;
+    padding: 0.75rem 1.25rem;
     font-weight: 400;
 }
 
 input.control-box::placeholder {
     color: var(--dim);
+    transition: color 0.2s ease;
 }
 
-.control-box-text {
-    font-size: 0.9rem;
-    word-break: break-all;
-    font-weight: 700;
-    letter-spacing: 0.02em;
-    line-height: 1.4;
+input.control-box:focus::placeholder {
+    color: var(--muted);
 }
 
-/* --- Token Badge in Control Box --- */
+/* Token Badge */
 .token-select-box {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
 }
 
 .token-select-icon {
-    width: 28px;
-    height: 28px;
+    width: 24px;
+    height: 24px;
     border-radius: 50%;
     overflow: hidden;
     background: var(--border);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 800;
     flex-shrink: 0;
+    transition: transform 0.2s ease;
+}
+
+.control-box:hover .token-select-icon {
+    transform: scale(1.1);
 }
 
 .token-select-icon img {
@@ -243,18 +395,42 @@ input.control-box::placeholder {
     background-color: var(--fg);
     color: var(--bg);
     border: none;
-    padding: 2rem;
+    padding: 1.25rem;
     font-family: inherit;
-    font-size: 1.25rem;
+    font-size: 1rem;
     font-weight: 800;
     letter-spacing: 0.05em;
     text-transform: inherit;
     cursor: pointer;
-    transition: background-color var(--transition), color var(--transition);
+    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    position: relative;
+    overflow: hidden;
+    animation: fadeInUp 0.5s ease 0.3s both;
+}
+
+.submit-btn::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.15), transparent);
+    transition: left 0.5s ease;
+}
+
+.submit-btn:hover:not(:disabled)::before {
+    left: 100%;
 }
 
 .submit-btn:hover:not(:disabled) {
-    background-color: #cccccc;
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(255, 255, 255, 0.1);
+}
+
+.submit-btn:active:not(:disabled) {
+    transform: translateY(0);
+    box-shadow: none;
 }
 
 .submit-btn:disabled {
@@ -267,60 +443,65 @@ input.control-box::placeholder {
 .steps-panel {
     display: flex;
     flex-direction: column;
-    padding: 3rem 2rem;
+    padding: 1.5rem 1.5rem;
     background-color: var(--bg);
-    overflow-y: auto;
+    overflow: hidden;
+    animation: slideInRight 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.15s both;
 }
 
 .steps-panel h2 {
-    font-size: 1rem;
+    font-size: 0.85rem;
     font-weight: 800;
     letter-spacing: 0.05em;
     border-bottom: 1px solid var(--border);
-    padding-bottom: 1rem;
-    margin-bottom: 1.5rem;
+    padding-bottom: 0.75rem;
+    margin-bottom: 0.75rem;
 }
 
 /* --- Step Rows --- */
 .step-row {
     display: grid;
     grid-template-columns: auto 1fr auto;
-    gap: 1rem;
-    padding: 1.25rem 0;
+    gap: 0.75rem;
+    padding: 0.75rem 0;
     border-bottom: 1px solid var(--border);
-    font-size: 0.85rem;
+    font-size: 0.8rem;
     font-weight: 700;
-    line-height: 1.4;
+    line-height: 1.3;
     letter-spacing: 0.02em;
-    opacity: 0.3;
-    transition: opacity 0.3s ease;
+    opacity: 0.25;
+    transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    transform: translateX(0);
 }
 
 .step-row.active {
     opacity: 1;
+    transform: translateX(4px);
 }
 
 .step-row.completed {
-    opacity: 0.7;
+    opacity: 0.6;
 }
 
 .step-icon {
-    width: 28px;
-    height: 28px;
+    width: 24px;
+    height: 24px;
     display: flex;
     align-items: center;
     justify-content: center;
     font-weight: 900;
-    font-size: 0.75rem;
+    font-size: 0.65rem;
     border: 1px solid var(--border);
     color: var(--muted);
     flex-shrink: 0;
+    transition: all 0.3s ease;
 }
 
 .step-row.active .step-icon {
     background: var(--fg);
     color: var(--bg);
     border-color: var(--fg);
+    animation: scaleIn 0.3s ease;
 }
 
 .step-row.completed .step-icon {
@@ -336,21 +517,21 @@ input.control-box::placeholder {
 }
 
 .step-label {
-    font-size: 0.8rem;
+    font-size: 0.7rem;
     font-weight: 800;
 }
 
 .step-desc {
-    font-size: 0.65rem;
+    font-size: 0.6rem;
     color: var(--muted);
-    margin-top: 0.25rem;
+    margin-top: 1px;
     font-weight: 600;
 }
 
 .step-status {
     display: flex;
     align-items: center;
-    font-size: 0.65rem;
+    font-size: 0.6rem;
     color: var(--muted);
     font-weight: 700;
 }
@@ -373,103 +554,109 @@ input.control-box::placeholder {
     animation: spin 0.8s linear infinite;
 }
 
-@keyframes spin {
-    to {
-        transform: rotate(360deg);
-    }
-}
-
 /* --- Deposit Address Display --- */
 .deposit-address-block {
     border: 1px solid var(--border);
-    padding: 1.5rem;
-    margin-bottom: 2.5rem;
+    padding: 1rem 1.25rem;
+    margin-bottom: 1.25rem;
     cursor: pointer;
-    transition: border-color var(--transition);
+    transition: all 0.3s ease;
+    animation: fadeInUp 0.4s ease both;
 }
 
 .deposit-address-block:hover {
     border-color: var(--fg);
+    box-shadow: 0 0 20px rgba(255, 255, 255, 0.03);
 }
 
 .deposit-address-block .label {
-    margin-bottom: 0.75rem;
+    margin-bottom: 0.5rem;
 }
 
 .deposit-address-text {
     font-family: 'SF Mono', 'Fira Code', monospace;
-    font-size: 0.8rem;
+    font-size: 0.75rem;
     word-break: break-all;
-    line-height: 1.5;
+    line-height: 1.4;
     color: var(--fg);
     font-weight: 600;
     letter-spacing: 0.02em;
 }
 
 .deposit-address-hint {
-    font-size: 0.65rem;
+    font-size: 0.6rem;
     color: var(--muted);
-    margin-top: 0.75rem;
+    margin-top: 0.5rem;
     font-weight: 600;
+    transition: color 0.2s ease;
+}
+
+.deposit-address-block:hover .deposit-address-hint {
+    color: var(--fg);
 }
 
 /* --- Secret Note --- */
 .note-block {
     border: 1px solid var(--red);
-    padding: 1.5rem;
-    margin-bottom: 2rem;
+    padding: 1rem 1.25rem;
+    margin-bottom: 1rem;
+    animation: scaleIn 0.4s ease both;
 }
 
 .note-block .label {
     color: var(--red);
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.4rem;
 }
 
 .note-warning {
-    font-size: 0.7rem;
+    font-size: 0.6rem;
     color: var(--red);
     font-weight: 700;
     line-height: 1.4;
-    margin-bottom: 1rem;
+    margin-bottom: 0.75rem;
 }
 
 .note-value {
     font-family: 'SF Mono', 'Fira Code', monospace;
-    font-size: 0.7rem;
+    font-size: 0.65rem;
     word-break: break-all;
-    line-height: 1.5;
+    line-height: 1.4;
     color: var(--fg);
     cursor: pointer;
-    padding: 1rem;
+    padding: 0.75rem;
     border: 1px solid var(--border);
-    transition: border-color var(--transition);
+    transition: all 0.25s ease;
 }
 
 .note-value:hover {
     border-color: var(--fg);
+    box-shadow: 0 0 20px rgba(255, 255, 255, 0.03);
 }
 
 .note-hint {
-    font-size: 0.6rem;
+    font-size: 0.55rem;
     color: var(--muted);
-    margin-top: 0.5rem;
+    margin-top: 0.4rem;
     text-align: center;
 }
 
 /* --- Status Box --- */
 .status-block {
-    padding: 1.5rem;
-    margin-bottom: 2rem;
+    padding: 1rem;
+    margin-bottom: 1rem;
     border: 1px solid var(--border);
     text-align: center;
+    animation: fadeInUp 0.3s ease both;
 }
 
 .status-block.loading {
     border-color: var(--border);
+    animation: borderPulse 2s ease infinite;
 }
 
 .status-block.success {
     border-color: var(--green);
+    animation: scaleIn 0.3s ease both;
 }
 
 .status-block.error {
@@ -477,7 +664,7 @@ input.control-box::placeholder {
 }
 
 .status-message {
-    font-size: 0.85rem;
+    font-size: 0.75rem;
     font-weight: 700;
     letter-spacing: 0.02em;
     line-height: 1.4;
@@ -493,11 +680,12 @@ input.control-box::placeholder {
 
 .status-link {
     display: block;
-    margin-top: 0.75rem;
-    font-size: 0.7rem;
+    margin-top: 0.5rem;
+    font-size: 0.65rem;
     color: var(--muted);
     text-decoration: underline;
     text-underline-offset: 2px;
+    transition: color 0.2s ease;
 }
 
 .status-link:hover {
@@ -512,8 +700,10 @@ input.control-box::placeholder {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(0, 0, 0, 0.8);
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(8px);
     padding: 20px;
+    animation: fadeIn 0.2s ease both;
 }
 
 .modal-card {
@@ -521,20 +711,21 @@ input.control-box::placeholder {
     border: 1px solid var(--border);
     width: 100%;
     max-width: 480px;
-    max-height: 80vh;
+    max-height: 75vh;
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    animation: scaleIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .modal-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 1.5rem 2rem;
+    padding: 1.25rem 1.5rem;
     border-bottom: 1px solid var(--border);
     font-weight: 800;
-    font-size: 1rem;
+    font-size: 0.9rem;
     letter-spacing: 0.05em;
 }
 
@@ -543,8 +734,8 @@ input.control-box::placeholder {
 }
 
 .modal-close {
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    height: 28px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -552,33 +743,34 @@ input.control-box::placeholder {
     border: 1px solid var(--border);
     cursor: pointer;
     color: var(--fg);
-    font-size: 14px;
-    transition: all var(--transition);
+    font-size: 12px;
+    transition: all 0.2s ease;
 }
 
 .modal-close:hover {
     background: var(--fg);
     color: var(--bg);
+    transform: rotate(90deg);
 }
 
 .modal-search-wrap {
-    padding: 1rem 2rem;
+    padding: 0.75rem 1.5rem;
     border-bottom: 1px solid var(--border);
 }
 
 .modal-search-input {
     width: 100%;
-    padding: 1rem;
+    padding: 0.75rem;
     background: transparent;
     border: 1px solid var(--border);
     color: var(--fg);
     font-family: inherit;
-    font-size: 0.85rem;
+    font-size: 0.8rem;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.02em;
     outline: none;
-    transition: border-color var(--transition);
+    transition: border-color 0.2s ease;
 }
 
 .modal-search-input:focus {
@@ -597,30 +789,31 @@ input.control-box::placeholder {
 .token-row {
     display: flex;
     align-items: center;
-    gap: 1rem;
-    padding: 1rem 2rem;
+    gap: 0.75rem;
+    padding: 0.75rem 1.5rem;
     cursor: pointer;
     border-bottom: 1px solid var(--border);
-    transition: background var(--transition);
+    transition: all 0.2s ease;
     font-weight: 700;
-    font-size: 0.85rem;
+    font-size: 0.8rem;
     letter-spacing: 0.02em;
 }
 
 .token-row:hover {
     background: var(--hover);
+    padding-left: 1.75rem;
 }
 
 .token-row-icon {
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    height: 28px;
     border-radius: 50%;
     overflow: hidden;
     background: var(--border);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 800;
     color: var(--muted);
     flex-shrink: 0;
@@ -639,13 +832,14 @@ input.control-box::placeholder {
 
 .token-row-symbol {
     font-weight: 800;
+    font-size: 0.8rem;
 }
 
 .token-row-name {
-    font-size: 0.7rem;
+    font-size: 0.65rem;
     color: var(--muted);
     font-weight: 600;
-    margin-top: 2px;
+    margin-top: 1px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -653,25 +847,25 @@ input.control-box::placeholder {
 
 .modal-loading,
 .modal-empty {
-    padding: 3rem 2rem;
+    padding: 2.5rem 1.5rem;
     text-align: center;
     color: var(--muted);
-    font-size: 0.85rem;
+    font-size: 0.8rem;
     font-weight: 700;
 }
 
-/* --- Info Panel (idle state) --- */
+/* --- Info Blocks --- */
 .info-block {
-    padding: 1.5rem 0;
+    padding: 0.75rem 0;
     border-bottom: 1px solid var(--border);
 }
 
 .info-block .label {
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.25rem;
 }
 
 .info-value {
-    font-size: 0.85rem;
+    font-size: 0.75rem;
     font-weight: 700;
 }
 
@@ -681,7 +875,7 @@ input.control-box::placeholder {
 
 /* --- Scrollbar --- */
 ::-webkit-scrollbar {
-    width: 4px;
+    width: 3px;
 }
 
 ::-webkit-scrollbar-track {
@@ -708,10 +902,10 @@ input.control-box::placeholder {
 
     .action-panel {
         border-right: none;
-        padding: 2rem;
+        padding: 1.5rem;
     }
 
     .panel-title {
-        font-size: clamp(3rem, 15vw, 6rem);
+        font-size: clamp(3rem, 15vw, 5rem);
     }
 }
