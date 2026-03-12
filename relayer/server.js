@@ -150,7 +150,7 @@ async function transferSPLTokens(fromKeypair, toPublicKey, mintPubkey, amount, t
 const NOISE_SKIM_RATE = 0.02; // 2% skim for noise pool
 const MIN_BLOCKS = 3;
 const MAX_BLOCKS = 6;
-const EPHEMERAL_SOL_FUND = 0.003 * 1e9; // 0.003 SOL per ephemeral for gas
+const EPHEMERAL_SOL_FUND = 0.005 * 1e9; // 0.005 SOL per ephemeral for gas + ATA creation
 const NOISE_LOOP_MIN = 2; // min extra noise bounces
 const NOISE_LOOP_MAX = 3; // max extra noise bounces
 
@@ -380,6 +380,21 @@ async function processWithdrawal(jobId) {
                 data: Buffer.concat([RELEASE_EXIT_DISC, noiseBuf]),
             });
             await sendAndConfirmTransaction(connection, new Transaction().add(noiseReleaseIx), [relayerKeypair]);
+        }
+
+        // Top up hop wallet before scatter (it pays for ATA creation per ephemeral)
+        const hopTopUp = BigInt(allBlocks.length) * BigInt(Math.ceil(EPHEMERAL_SOL_FUND));
+        const hopBalance = await connection.getBalance(hopA.publicKey);
+        if (hopBalance < Number(hopTopUp)) {
+            console.log(`[SCATTER] Topping up Hop A with ${Number(hopTopUp) / 1e9} SOL for ATA creation`);
+            const topUpTx = new Transaction().add(
+                SystemProgram.transfer({
+                    fromPubkey: relayerKeypair.publicKey,
+                    toPubkey: hopA.publicKey,
+                    lamports: Number(hopTopUp),
+                })
+            );
+            await sendAndConfirmTransaction(connection, topUpTx, [relayerKeypair]);
         }
 
         // Scatter blocks from Hop A to ephemerals with random delays
