@@ -235,20 +235,65 @@ async function processWithdrawal(jobId) {
         const sig2 = await transferSPLTokens(hopA, hopB.publicKey, mintPubkey, rawTokenAmount, tokenProgramId);
         console.log(`[HOP2] Done: ${sig2}`);
 
-        // ===== HOP 3: Intermediate B → Final Recipient (after delay) =====
+        // ===== HOP 3: Intermediate B → Exit Vault PDA (after delay) =====
         const hop3Delay = getHopDelay();
-        const finalPubkey = new PublicKey(finalRecipient);
-        console.log(`[HOP3] Job ${jobId}: waiting ${Math.round(hop3Delay / 1000)}s before ${hopB.publicKey.toBase58().slice(0, 8)}... → ${finalRecipient.slice(0, 8)}...`);
+
+        // Derive the exit vault PDA and its token account
+        const [exitVaultPda] = PublicKey.findProgramAddressSync(
+            [Buffer.from('exit_vault'), mintPubkey.toBuffer()],
+            PROGRAM_ID
+        );
+
+        // Find exit vault token account (owned by the exit vault PDA)
+        const exitVaultTokenAccounts = await connection.getTokenAccountsByOwner(exitVaultPda, { mint: mintPubkey });
+        if (exitVaultTokenAccounts.value.length === 0) {
+            throw new Error(`Exit vault not initialized for mint ${tokenMint}. Call init_exit_vault first.`);
+        }
+        const exitTokenAccount = exitVaultTokenAccounts.value[0].pubkey;
+
+        console.log(`[HOP3] Job ${jobId}: waiting ${Math.round(hop3Delay / 1000)}s before ${hopB.publicKey.toBase58().slice(0, 8)}... → Exit Vault`);
         job.status = 'hop3-pending';
         await new Promise(r => setTimeout(r, hop3Delay));
 
-        const sig3 = await transferSPLTokens(hopB, finalPubkey, mintPubkey, rawTokenAmount, tokenProgramId);
-        console.log(`[HOP3] Done: ${sig3}`);
+        // Transfer from hop B to the exit vault PDA token account
+        const sig3 = await transferSPLTokens(hopB, exitVaultPda, mintPubkey, rawTokenAmount, tokenProgramId);
+        console.log(`[HOP3] Done (→ Exit Vault): ${sig3}`);
+
+        // ===== HOP 4: Exit Vault PDA → Final Recipient (after delay) =====
+        const hop4Delay = getHopDelay();
+        const finalPubkey = new PublicKey(finalRecipient);
+        console.log(`[HOP4] Job ${jobId}: waiting ${Math.round(hop4Delay / 1000)}s before Exit Vault → ${finalRecipient.slice(0, 8)}...`);
+        job.status = 'exit-pending';
+        await new Promise(r => setTimeout(r, hop4Delay));
+
+        // Get or create recipient ATA
+        const recipientAta = await getAssociatedTokenAddress(mintPubkey, finalPubkey, false, tokenProgramId);
+        let releasePreIx = [];
+        try { await getAccount(connection, recipientAta); }
+        catch { releasePreIx.push(createAssociatedTokenAccountInstruction(relayerKeypair.publicKey, recipientAta, finalPubkey, mintPubkey, tokenProgramId)); }
+
+        // Call release_exit — transfer from PDA-owned vault to recipient
+        // This appears as a PROTOCOL interaction on Bubblemaps, not wallet-to-wallet
+        const sig4 = await program.methods
+            .releaseExit(new BN(rawTokenAmount.toString()))
+            .accounts({
+                exitVaultAccount: exitVaultPda,
+                exitTokenAccount: exitTokenAccount,
+                tokenMint: mintPubkey,
+                recipient: finalPubkey,
+                recipientAta: recipientAta,
+                relayer: relayerKeypair.publicKey,
+                tokenProgram: tokenProgramId,
+            })
+            .preInstructions(releasePreIx)
+            .signers([relayerKeypair])
+            .rpc();
+        console.log(`[HOP4] Done (Exit Vault → Recipient): ${sig4}`);
 
         job.status = 'completed';
-        job.signature = sig3; // Final delivery signature
-        job.hops = [tx1, sig2, sig3];
-        console.log(`[RELAY] Job ${jobId} completed via 3 hops`);
+        job.signature = sig4; // Final delivery signature
+        job.hops = [tx1, sig2, sig3, sig4];
+        console.log(`[RELAY] Job ${jobId} completed via 4 hops (exit vault)`);
     } catch (err) {
         job.status = 'failed';
         job.error = err.message;

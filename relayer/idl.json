@@ -166,6 +166,82 @@
       ]
     },
     {
+      "name": "init_exit_vault",
+      "docs": [
+        "Initialize an exit vault for a token mint.",
+        "The exit vault is a PDA-controlled token account the relayer routes tokens",
+        "through before the final transfer to the recipient.",
+        "This makes the final transfer appear as a protocol withdrawal on Bubblemaps."
+      ],
+      "discriminator": [
+        34,
+        26,
+        19,
+        189,
+        45,
+        228,
+        118,
+        155
+      ],
+      "accounts": [
+        {
+          "name": "exit_vault_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  120,
+                  105,
+                  116,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "token_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "exit_token_account",
+          "docs": [
+            "The PDA-controlled token account for holding tokens before release"
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "token_mint"
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "rent",
+          "address": "SysvarRent111111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "init_merkle_tree",
       "discriminator": [
         8,
@@ -234,6 +310,80 @@
               32
             ]
           }
+        }
+      ]
+    },
+    {
+      "name": "release_exit",
+      "docs": [
+        "Release tokens from the exit vault to a recipient.",
+        "Only callable by the relayer. The transfer comes from a PDA-owned token",
+        "account, which Bubblemaps treats as a protocol interaction."
+      ],
+      "discriminator": [
+        35,
+        55,
+        129,
+        211,
+        18,
+        67,
+        16,
+        112
+      ],
+      "accounts": [
+        {
+          "name": "exit_vault_account",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  120,
+                  105,
+                  116,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "exit_vault_account.token_mint",
+                "account": "ExitVaultAccount"
+              }
+            ]
+          }
+        },
+        {
+          "name": "exit_token_account",
+          "writable": true
+        },
+        {
+          "name": "token_mint"
+        },
+        {
+          "name": "recipient"
+        },
+        {
+          "name": "recipient_ata",
+          "writable": true
+        },
+        {
+          "name": "relayer",
+          "signer": true
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
         }
       ]
     },
@@ -377,6 +527,19 @@
   ],
   "accounts": [
     {
+      "name": "ExitVaultAccount",
+      "discriminator": [
+        55,
+        64,
+        200,
+        250,
+        218,
+        51,
+        238,
+        147
+      ]
+    },
+    {
       "name": "MerkleTreeAccount",
       "discriminator": [
         147,
@@ -488,6 +651,26 @@
           {
             "name": "timestamp",
             "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ExitVaultAccount",
+      "docs": [
+        "Exit vault — a PDA-controlled account for the final hop.",
+        "Tokens sent FROM this PDA look like protocol interactions on Bubblemaps."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "token_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
           }
         ]
       }

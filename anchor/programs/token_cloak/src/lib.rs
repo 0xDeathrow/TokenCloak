@@ -139,15 +139,10 @@ pub mod token_cloak {
         require!(recipient_field == expected_recipient_field, TokenCloakError::InvalidProof);
 
         // --- Groth16 ZK Proof Verification ---
-        // Public inputs: [root, nullifierHash, recipient] (each 32 bytes BE)
         let public_inputs: [[u8; 32]; 3] = [root, nullifier_hash, recipient_field];
-
-        // Parse proof components (big-endian format)
         let proof_a: [u8; 64] = proof[0..64].try_into().unwrap();
         let proof_b: [u8; 128] = proof[64..192].try_into().unwrap();
         let proof_c: [u8; 64] = proof[192..256].try_into().unwrap();
-
-        // Negate proof_a for the pairing check
         let proof_a_neg = negate_g1(&proof_a)?;
 
         let mut verifier = Groth16Verifier::new(
@@ -159,7 +154,6 @@ pub mod token_cloak {
         ).map_err(|_| TokenCloakError::InvalidProof)?;
 
         verifier.verify().map_err(|_| TokenCloakError::InvalidProof)?;
-
         msg!("ZK proof verified!");
 
         // Mark nullifier as spent
@@ -189,6 +183,49 @@ pub mod token_cloak {
         )?;
 
         emit!(WithdrawEvent { nullifier_hash, recipient: ctx.accounts.recipient.key(), timestamp: Clock::get()?.unix_timestamp });
+        Ok(())
+    }
+
+    /// Initialize an exit vault for a token mint.
+    /// The exit vault is a PDA-controlled token account the relayer routes tokens
+    /// through before the final transfer to the recipient.
+    /// This makes the final transfer appear as a protocol withdrawal on Bubblemaps.
+    pub fn init_exit_vault(ctx: Context<InitExitVault>) -> Result<()> {
+        let ev = &mut ctx.accounts.exit_vault_account;
+        ev.token_mint = ctx.accounts.token_mint.key();
+        ev.bump = ctx.bumps.exit_vault_account;
+        msg!("Exit vault initialized for mint {}", ctx.accounts.token_mint.key());
+        Ok(())
+    }
+
+    /// Release tokens from the exit vault to a recipient.
+    /// Only callable by the relayer. The transfer comes from a PDA-owned token
+    /// account, which Bubblemaps treats as a protocol interaction.
+    pub fn release_exit(
+        ctx: Context<ReleaseExit>,
+        amount: u64,
+    ) -> Result<()> {
+        let ev = &ctx.accounts.exit_vault_account;
+        let mint_key = ev.token_mint;
+        let bump = ev.bump;
+        let seeds: &[&[&[u8]]] = &[&[b"exit_vault", mint_key.as_ref(), &[bump]]];
+
+        token_interface::transfer_checked(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                TransferChecked {
+                    from: ctx.accounts.exit_token_account.to_account_info(),
+                    to: ctx.accounts.recipient_ata.to_account_info(),
+                    authority: ctx.accounts.exit_vault_account.to_account_info(),
+                    mint: ctx.accounts.token_mint.to_account_info(),
+                },
+                seeds,
+            ),
+            amount,
+            ctx.accounts.token_mint.decimals,
+        )?;
+
+        msg!("Exit release: {} tokens to {}", amount, ctx.accounts.recipient.key());
         Ok(())
     }
 }
@@ -331,6 +368,14 @@ pub struct NullifierAccount {
     pub nullifier_hash: [u8; 32],
 }
 
+/// Exit vault — a PDA-controlled account for the final hop.
+/// Tokens sent FROM this PDA look like protocol interactions on Bubblemaps.
+#[account]
+pub struct ExitVaultAccount {
+    pub token_mint: Pubkey,
+    pub bump: u8,
+}
+
 // ============================================================================
 // Contexts
 // ============================================================================
@@ -416,6 +461,40 @@ pub struct Withdraw<'info> {
     #[account(mut)]
     pub relayer: Signer<'info>,
     pub system_program: Program<'info, System>,
+    pub token_program: Interface<'info, TokenInterface>,
+}
+
+#[derive(Accounts)]
+pub struct InitExitVault<'info> {
+    #[account(init, payer = authority, space = 41,
+        seeds = [b"exit_vault", token_mint.key().as_ref()], bump)]
+    pub exit_vault_account: Box<Account<'info, ExitVaultAccount>>,
+    /// The PDA-controlled token account for holding tokens before release
+    #[account(init, payer = authority,
+        token::mint = token_mint, token::authority = exit_vault_account)]
+    pub exit_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
+    pub token_mint: InterfaceAccount<'info, Mint>,
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    pub system_program: Program<'info, System>,
+    pub token_program: Interface<'info, TokenInterface>,
+    pub rent: Sysvar<'info, Rent>,
+}
+
+#[derive(Accounts)]
+pub struct ReleaseExit<'info> {
+    #[account(seeds = [b"exit_vault", exit_vault_account.token_mint.as_ref()],
+        bump = exit_vault_account.bump)]
+    pub exit_vault_account: Box<Account<'info, ExitVaultAccount>>,
+    #[account(mut, constraint = exit_token_account.owner == exit_vault_account.key())]
+    pub exit_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
+    pub token_mint: InterfaceAccount<'info, Mint>,
+    /// CHECK: recipient
+    pub recipient: AccountInfo<'info>,
+    #[account(mut, constraint = recipient_ata.mint == exit_vault_account.token_mint)]
+    pub recipient_ata: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(constraint = relayer.key() == RELAYER_WALLET)]
+    pub relayer: Signer<'info>,
     pub token_program: Interface<'info, TokenInterface>,
 }
 
