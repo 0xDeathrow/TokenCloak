@@ -47,7 +47,13 @@ async function getAccountInfoWithRetry(connection, pubkey, retries = 3) {
 
 export function getProgram(wallet) {
     const connection = getConnection()
-    const provider = new AnchorProvider(connection, wallet, { commitment: 'confirmed' })
+    // Create a read-only provider when no wallet is connected
+    const walletAdapter = wallet || {
+        publicKey: Keypair.generate().publicKey,
+        signTransaction: async (tx) => tx,
+        signAllTransactions: async (txs) => txs,
+    }
+    const provider = new AnchorProvider(connection, walletAdapter, { commitment: 'confirmed' })
     return new Program(idl, provider)
 }
 

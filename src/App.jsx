@@ -10,14 +10,12 @@ function App() {
 
     return (
         <>
-            {/* Animated smoke background */}
+            {/* Subtle background */}
             <div className="bg-smoke">
                 <div className="smoke-layer smoke-1" />
                 <div className="smoke-layer smoke-2" />
                 <div className="smoke-layer smoke-3" />
-                <div className="smoke-layer smoke-4" />
             </div>
-            <div className="bg-noise" />
 
             <Header />
 
@@ -27,7 +25,7 @@ function App() {
                         Private <span className="accent">Token Transfers</span>
                     </h1>
                     <p className="hero-desc">
-                        Transfer any SPL token to any wallet. Zero on-chain link between sender and recipient. No Bubblemaps connections.
+                        Transfer any SPL token privately. No wallet connection required. Zero on-chain link between sender and recipient.
                     </p>
                 </div>
 
@@ -44,7 +42,7 @@ function App() {
             </main>
 
             <footer className="footer">
-                Powered by zero-knowledge proofs on Solana &middot; <a href="#">Docs</a> &middot; <a href="#">GitHub</a>
+                Zero-knowledge proofs on Solana &middot; <a href="#">Docs</a> &middot; <a href="#">GitHub</a>
             </footer>
         </>
     )

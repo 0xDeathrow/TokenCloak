@@ -1,14 +1,9 @@
-import { useWallet } from '@solana/wallet-adapter-react'
-import { WalletMultiButton } from '@solana/wallet-adapter-react-ui'
-
 function Header() {
-    const { connected, publicKey } = useWallet()
-
     return (
         <header className="header">
             <div className="header-left">
                 <a href="/" className="header-logo">
-                    <img src="/LOGO.jpg" alt="TokenCloak" />
+                    <img src="/logo.jpg" alt="TokenCloak" />
                     <span className="header-logo-text">
                         Token<span className="accent">Cloak</span>
                     </span>
@@ -16,7 +11,10 @@ function Header() {
             </div>
 
             <div className="header-right">
-                <WalletMultiButton />
+                <div className="header-status">
+                    <span className="dot" />
+                    <span>Mainnet</span>
+                </div>
             </div>
         </header>
     )
