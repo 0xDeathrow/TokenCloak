@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
-import { getTokenMetadata, getMultipleTokenMetadata, POPULAR_MINTS } from '../utils/helius'
+import { useWallet } from '@solana/wallet-adapter-react'
+import { getTokenMetadata, getMultipleTokenMetadata, getWalletTokens, POPULAR_MINTS } from '../utils/helius'
 
 /** Token icon that cascades through multiple image URLs on failure */
 function TokenIcon({ token }) {
@@ -31,7 +32,9 @@ function TokenIcon({ token }) {
 }
 
 function TokenSearchModal({ onSelect, onClose }) {
+    const { publicKey } = useWallet()
     const [search, setSearch] = useState('')
+    const [walletTokens, setWalletTokens] = useState([])
     const [popularTokens, setPopularTokens] = useState([])
     const [customResult, setCustomResult] = useState(null)
     const [loading, setLoading] = useState(true)
@@ -39,18 +42,29 @@ function TokenSearchModal({ onSelect, onClose }) {
     const inputRef = useRef(null)
     const searchTimeout = useRef(null)
 
-    // Fetch popular tokens on mount
+    // Fetch wallet tokens + popular tokens on mount
     useEffect(() => {
         inputRef.current?.focus()
 
-        async function loadPopular() {
+        async function loadTokens() {
             setLoading(true)
-            const tokens = await getMultipleTokenMetadata(POPULAR_MINTS)
-            setPopularTokens(tokens)
+
+            // Fetch wallet tokens and popular tokens in parallel
+            const [wallet, popular] = await Promise.all([
+                publicKey ? getWalletTokens(publicKey.toBase58()) : Promise.resolve([]),
+                getMultipleTokenMetadata(POPULAR_MINTS),
+            ])
+
+            setWalletTokens(wallet)
+
+            // Filter out popular tokens already in wallet list
+            const walletMints = new Set(wallet.map(t => t.mint))
+            setPopularTokens(popular.filter(t => !walletMints.has(t.mint)))
+
             setLoading(false)
         }
-        loadPopular()
-    }, [])
+        loadTokens()
+    }, [publicKey])
 
     // Detect mint address and fetch metadata
     const isMintAddress = search.length >= 32 && /^[1-9A-HJ-NP-Za-km-z]+$/.test(search)
@@ -75,12 +89,17 @@ function TokenSearchModal({ onSelect, onClose }) {
         }
     }, [search, isMintAddress])
 
-    // Filter popular tokens by search text
-    const filtered = search && !isMintAddress
-        ? popularTokens.filter(t =>
-            t.symbol.toLowerCase().includes(search.toLowerCase()) ||
-            t.name.toLowerCase().includes(search.toLowerCase())
-        )
+    // Filter tokens by search text
+    const filterFn = (t) =>
+        t.symbol.toLowerCase().includes(search.toLowerCase()) ||
+        t.name.toLowerCase().includes(search.toLowerCase())
+
+    const filteredWallet = search && !isMintAddress
+        ? walletTokens.filter(filterFn)
+        : walletTokens
+
+    const filteredPopular = search && !isMintAddress
+        ? popularTokens.filter(filterFn)
         : popularTokens
 
     const handleSelect = (token) => {
@@ -91,6 +110,13 @@ function TokenSearchModal({ onSelect, onClose }) {
             image: token.image,
             images: token.images || (token.image ? [token.image] : []),
         })
+    }
+
+    const formatBalance = (bal) => {
+        if (bal >= 1_000_000) return (bal / 1_000_000).toFixed(2) + 'M'
+        if (bal >= 1_000) return (bal / 1_000).toFixed(2) + 'K'
+        if (bal >= 1) return bal.toFixed(2)
+        return bal.toFixed(6)
     }
 
     return (
@@ -146,22 +172,77 @@ function TokenSearchModal({ onSelect, onClose }) {
                         </div>
                     )}
 
-                    {/* Popular tokens */}
-                    {!loading && !isMintAddress && filtered.map((token) => (
-                        <div
-                            key={token.mint}
-                            className="token-list-item"
-                            onClick={() => handleSelect(token)}
-                        >
-                            <TokenIcon token={token} />
-                            <div className="token-list-info">
-                                <div className="token-list-name">{token.symbol} — {token.name}</div>
-                                <div className="token-list-mint">{token.mint}</div>
+                    {/* Wallet tokens section */}
+                    {!loading && !isMintAddress && filteredWallet.length > 0 && (
+                        <>
+                            <div style={{
+                                padding: '8px 16px 4px',
+                                fontSize: '11px',
+                                fontWeight: 600,
+                                color: 'var(--accent)',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.5px',
+                            }}>
+                                Your Wallet
                             </div>
-                        </div>
-                    ))}
+                            {filteredWallet.map((token) => (
+                                <div
+                                    key={`w-${token.mint}`}
+                                    className="token-list-item"
+                                    onClick={() => handleSelect(token)}
+                                >
+                                    <TokenIcon token={token} />
+                                    <div className="token-list-info">
+                                        <div className="token-list-name">{token.symbol} — {token.name}</div>
+                                        <div className="token-list-mint">{token.mint}</div>
+                                    </div>
+                                    <div style={{
+                                        marginLeft: 'auto',
+                                        fontSize: '12px',
+                                        color: 'var(--text-muted)',
+                                        fontFamily: 'monospace',
+                                        flexShrink: 0,
+                                        paddingLeft: '8px',
+                                    }}>
+                                        {formatBalance(token.balance)}
+                                    </div>
+                                </div>
+                            ))}
+                        </>
+                    )}
 
-                    {!loading && !isMintAddress && filtered.length === 0 && (
+                    {/* Popular tokens section */}
+                    {!loading && !isMintAddress && filteredPopular.length > 0 && (
+                        <>
+                            {filteredWallet.length > 0 && (
+                                <div style={{
+                                    padding: '8px 16px 4px',
+                                    fontSize: '11px',
+                                    fontWeight: 600,
+                                    color: 'var(--text-muted)',
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.5px',
+                                }}>
+                                    Popular Tokens
+                                </div>
+                            )}
+                            {filteredPopular.map((token) => (
+                                <div
+                                    key={token.mint}
+                                    className="token-list-item"
+                                    onClick={() => handleSelect(token)}
+                                >
+                                    <TokenIcon token={token} />
+                                    <div className="token-list-info">
+                                        <div className="token-list-name">{token.symbol} — {token.name}</div>
+                                        <div className="token-list-mint">{token.mint}</div>
+                                    </div>
+                                </div>
+                            ))}
+                        </>
+                    )}
+
+                    {!loading && !isMintAddress && filteredWallet.length === 0 && filteredPopular.length === 0 && (
                         <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
                             No tokens found. Paste a mint address to transfer any SPL token.
                         </div>

@@ -176,3 +176,67 @@ export const POPULAR_MINTS = [
     'HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3',  // PYTH
     'orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE',   // ORCA
 ]
+
+/**
+ * Fetch all fungible tokens held by a wallet using Helius DAS searchAssets.
+ * Returns array of { symbol, name, image, images, mint, balance }.
+ */
+export async function getWalletTokens(walletAddress) {
+    if (!walletAddress) return []
+    try {
+        const res = await fetch(HELIUS_RPC, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: 'wallet-tokens',
+                method: 'searchAssets',
+                params: {
+                    ownerAddress: walletAddress,
+                    tokenType: 'fungible',
+                    displayOptions: { showFungible: true },
+                },
+            }),
+        })
+        const data = await res.json()
+        if (!data.result?.items) return []
+
+        return data.result.items
+            .filter(a => a.token_info?.balance > 0)
+            .map(asset => {
+                const content = asset.content || {}
+                const metadata = content.metadata || {}
+                const links = content.links || {}
+                const files = content.files || []
+                const tokenInfo = asset.token_info || {}
+
+                const imageCandidates = []
+                if (files.length > 0) {
+                    const imgFile = files.find(f => f.mime?.startsWith('image/'))
+                    if (imgFile?.cdn_uri) imageCandidates.push(imgFile.cdn_uri)
+                }
+                if (links.image) imageCandidates.push(...buildImageCandidates(links.image))
+
+                const balance = tokenInfo.balance
+                    ? tokenInfo.balance / Math.pow(10, tokenInfo.decimals || 0)
+                    : 0
+
+                const token = {
+                    symbol: metadata.symbol || asset.id?.slice(0, 4)?.toUpperCase() || '???',
+                    name: metadata.name || 'Unknown Token',
+                    image: imageCandidates[0] || null,
+                    images: [...new Set(imageCandidates)],
+                    mint: asset.id,
+                    balance,
+                    decimals: tokenInfo.decimals || 0,
+                }
+                tokenCache.set(asset.id, token)
+                return token
+            })
+            .sort((a, b) => b.balance - a.balance)
+    } catch (err) {
+        console.warn('Failed to fetch wallet tokens:', err)
+        return []
+    }
+}
+

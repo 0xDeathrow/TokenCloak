@@ -15,10 +15,7 @@ async function getSnarkjs() {
 }
 
 const PROGRAM_ID = new PublicKey('EQfV5pm72GfrifQX3LCiRzUf7zZdJ6hS7PbM9o6x6FVs')
-const NETWORK = import.meta.env.VITE_NETWORK || 'mainnet'
-const RPC_URL = NETWORK === 'mainnet'
-    ? `https://mainnet.helius-rpc.com/?api-key=${import.meta.env.VITE_HELIUS_API_KEY}`
-    : 'https://api.devnet.solana.com'
+const RPC_URL = `https://mainnet.helius-rpc.com/?api-key=${import.meta.env.VITE_HELIUS_API_KEY}`
 const RELAYER_URL = import.meta.env.VITE_RELAYER_URL || 'http://localhost:3001'
 const TREASURY = new PublicKey('FukM6TdFpsKPEmzjhKAoES7qcuGYq8kGn4ZiByraKzWH')
 const RELAYER_WALLET = new PublicKey('En5imPirNXRw3T2m1kLy237UWz5FNSKoagu4p7j7KV9M')

@@ -4,10 +4,7 @@ import { WalletModalProvider } from '@solana/wallet-adapter-react-ui'
 import { PhantomWalletAdapter, SolflareWalletAdapter } from '@solana/wallet-adapter-wallets'
 import '@solana/wallet-adapter-react-ui/styles.css'
 
-const NETWORK = import.meta.env.VITE_NETWORK || 'mainnet'
-const RPC_URL = NETWORK === 'mainnet'
-    ? `https://mainnet.helius-rpc.com/?api-key=${import.meta.env.VITE_HELIUS_API_KEY}`
-    : 'https://api.devnet.solana.com'
+const RPC_URL = `https://mainnet.helius-rpc.com/?api-key=${import.meta.env.VITE_HELIUS_API_KEY}`
 
 export default function WalletContextProvider({ children }) {
     const wallets = useMemo(() => [
