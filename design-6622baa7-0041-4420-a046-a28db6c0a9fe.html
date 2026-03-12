@@ -1,0 +1,414 @@
+<html lang="en" vid="0"><head vid="1">
+<meta charset="UTF-8" vid="2">
+<meta name="viewport" content="width=device-width, initial-scale=1.0" vid="3">
+<title vid="4">Crypto Asset Management</title>
+<style vid="5">
+  
+
+  :root {
+    --bg: #000000;
+    --fg: #FFFFFF;
+    --border: #333333;
+    --hover: #1A1A1A;
+    --font-primary: 'Helvetica Neue', Helvetica, Arial, sans-serif; 
+    --font-display: Impact, sans-serif; 
+  }
+
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    background-color: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-primary);
+    text-transform: uppercase;
+    height: 100vh;
+    overflow: hidden; 
+    display: flex;
+    flex-direction: column;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  
+  h1 {
+    font-family: var(--font-display);
+    font-size: clamp(6rem, 10vw, 12rem);
+    line-height: 0.8;
+    letter-spacing: -0.02em;
+    margin-bottom: 2rem;
+    font-weight: 400; 
+  }
+
+  h2 {
+    font-size: 1rem;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .label {
+    font-size: 0.75rem;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    color: #999;
+    display: block;
+    margin-bottom: 0.5rem;
+  }
+
+  
+  
+  .top-bar {
+    display: flex;
+    justify-content: space-between;
+    padding: 1.5rem 2rem;
+    border-bottom: 1px solid var(--border);
+    font-weight: 800;
+    font-size: 0.85rem;
+    letter-spacing: 0.05em;
+    flex-shrink: 0;
+  }
+
+  .main-grid {
+    display: grid;
+    grid-template-columns: 1fr 400px; 
+    flex-grow: 1;
+    overflow: hidden;
+  }
+
+  
+  .action-panel {
+    padding: 3rem 4rem;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+  }
+
+  
+  .tabs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background-color: var(--border); 
+    border: 1px solid var(--border);
+    margin-bottom: 3rem;
+  }
+
+  .tab {
+    background-color: var(--bg);
+    color: var(--fg);
+    border: none;
+    padding: 1.5rem;
+    font-family: inherit;
+    font-weight: 800;
+    font-size: 1rem;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    text-transform: inherit;
+    transition: background-color 0.2s;
+  }
+
+  .tab:hover {
+    background-color: var(--hover);
+  }
+
+  .tab.active {
+    background-color: var(--fg);
+    color: var(--bg);
+  }
+
+  
+  .form-group {
+    margin-bottom: 2.5rem;
+  }
+
+  .form-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+  }
+
+  .balance {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--fg);
+  }
+
+  
+  .control-box {
+    width: 100%;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--fg);
+    padding: 1.5rem;
+    font-family: inherit;
+    font-weight: 700;
+    font-size: 1.25rem;
+    text-transform: inherit;
+    outline: none;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    transition: border-color 0.2s;
+  }
+
+  .control-box:hover, .control-box:focus-within {
+    border-color: var(--fg);
+  }
+
+  input.control-box {
+    cursor: text;
+    font-size: 3rem; 
+    padding: 1rem 1.5rem;
+    font-weight: 400; 
+  }
+
+  input.control-box::placeholder {
+    color: #444;
+  }
+
+  
+  .submit-btn {
+    margin-top: auto;
+    width: 100%;
+    background-color: var(--fg);
+    color: var(--bg);
+    border: none;
+    padding: 2rem;
+    font-family: inherit;
+    font-size: 1.5rem;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    text-transform: inherit;
+    cursor: pointer;
+    transition: background-color 0.2s, color 0.2s;
+  }
+
+  .submit-btn:hover {
+    background-color: #CCC;
+  }
+
+  
+  
+  .ledger-panel {
+    display: flex;
+    flex-direction: column;
+    padding: 3rem 2rem;
+    background-color: var(--bg);
+  }
+
+  .ledger-list {
+    flex-grow: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .ledger-row {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 1rem;
+    padding: 1rem 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.85rem;
+    font-weight: 700;
+    line-height: 1.4;
+    letter-spacing: 0.02em;
+  }
+
+  .ledger-row:hover {
+    background-color: var(--hover);
+  }
+
+  .row-icon {
+    width: 24px;
+    height: 24px;
+    background: var(--fg);
+    color: var(--bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 900;
+  }
+
+  .row-icon.out {
+    background: transparent;
+    border: 1px solid var(--fg);
+    color: var(--fg);
+  }
+
+  .row-details {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .row-date {
+    font-size: 0.65rem;
+    color: #999;
+    margin-top: 0.25rem;
+  }
+
+  .row-amount {
+    text-align: right;
+  }
+
+  .row-status {
+    font-size: 0.65rem;
+    color: #999;
+    margin-top: 0.25rem;
+  }
+
+  
+  ::-webkit-scrollbar {
+    width: 4px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--bg);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #666;
+  }
+
+</style>
+</head>
+<body vid="6">
+
+  <header class="top-bar" vid="7">
+    <span vid="8">MENU</span>
+    <span vid="9">TREASURY MANAGEMENT</span>
+  </header>
+
+  <main class="main-grid" vid="10">
+    
+    
+    <section class="action-panel" vid="11">
+      
+      <h1 vid="12">DEPOSIT</h1>
+      
+      <div class="tabs" vid="13">
+        <button class="tab active" vid="14">DEPOSIT</button>
+        <button class="tab" vid="15">WITHDRAW</button>
+      </div>
+
+      <div class="form-group" vid="16">
+        <span class="label" vid="17">SELECT ASSET</span>
+        <div class="control-box" tabindex="0" vid="18">
+          <span vid="19">BITCOIN (BTC)</span>
+          <span vid="20">▼</span>
+        </div>
+      </div>
+
+      <div class="form-group" vid="21">
+        <div class="form-header" vid="22">
+          <span class="label" vid="23">AMOUNT</span>
+          <span class="balance" vid="24">BALANCE: 2.4500 BTC</span>
+        </div>
+        <input type="text" class="control-box" placeholder="0.00" value="0.5" vid="25">
+      </div>
+      
+      <div class="form-group" style="margin-top: 2rem;" vid="26">
+        <span class="label" vid="27">DESTINATION ADDRESS</span>
+        <div class="control-box" style="font-size: 0.9rem; word-break: break-all;" vid="28">
+          bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh
+        </div>
+      </div>
+
+      <button class="submit-btn" vid="29">EXECUTE DEPOSIT</button>
+    </section>
+
+    
+    
+    <section class="ledger-panel" vid="30">
+      <h2 vid="31">RECENT ACTIVITY</h2>
+      
+      <div class="ledger-list" vid="32">
+        
+        <div class="ledger-row" vid="33">
+          <div class="row-icon" vid="34">↓</div>
+          <div class="row-details" vid="35">
+            <span vid="36">DEPOSIT BTC</span>
+            <span class="row-date" vid="37">OCT 24, 2023 - 14:32</span>
+          </div>
+          <div class="row-amount" vid="38">
+            <span vid="39">+ 1.2500</span>
+            <span class="row-status" vid="40">CONFIRMED</span>
+          </div>
+        </div>
+
+        <div class="ledger-row" vid="41">
+          <div class="row-icon out" vid="42">↑</div>
+          <div class="row-details" vid="43">
+            <span vid="44">WITHDRAW ETH</span>
+            <span class="row-date" vid="45">OCT 22, 2023 - 09:15</span>
+          </div>
+          <div class="row-amount" vid="46">
+            <span vid="47">- 14.000</span>
+            <span class="row-status" vid="48">COMPLETED</span>
+          </div>
+        </div>
+
+        <div class="ledger-row" vid="49">
+          <div class="row-icon out" vid="50">↑</div>
+          <div class="row-details" vid="51">
+            <span vid="52">WITHDRAW SOL</span>
+            <span class="row-date" vid="53">OCT 18, 2023 - 18:45</span>
+          </div>
+          <div class="row-amount" vid="54">
+            <span vid="55">- 250.00</span>
+            <span class="row-status" vid="56">COMPLETED</span>
+          </div>
+        </div>
+
+        <div class="ledger-row" vid="57">
+          <div class="row-icon" vid="58">↓</div>
+          <div class="row-details" vid="59">
+            <span vid="60">DEPOSIT USDC</span>
+            <span class="row-date" vid="61">OCT 15, 2023 - 11:20</span>
+          </div>
+          <div class="row-amount" vid="62">
+            <span vid="63">+ 10,000</span>
+            <span class="row-status" vid="64">CONFIRMED</span>
+          </div>
+        </div>
+
+        <div class="ledger-row" vid="65">
+          <div class="row-icon" vid="66">↓</div>
+          <div class="row-details" vid="67">
+            <span vid="68">DEPOSIT BTC</span>
+            <span class="row-date" vid="69">OCT 10, 2023 - 16:05</span>
+          </div>
+          <div class="row-amount" vid="70">
+            <span vid="71">+ 0.5000</span>
+            <span class="row-status" vid="72">CONFIRMED</span>
+          </div>
+        </div>
+        
+         <div class="ledger-row" vid="73">
+          <div class="row-icon out" vid="74">↑</div>
+          <div class="row-details" vid="75">
+            <span vid="76">WITHDRAW LINK</span>
+            <span class="row-date" vid="77">OCT 05, 2023 - 08:30</span>
+          </div>
+          <div class="row-amount" vid="78">
+            <span vid="79">- 1500.0</span>
+            <span class="row-status" vid="80">COMPLETED</span>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+
+</body></html>
