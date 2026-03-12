@@ -34,7 +34,18 @@ async function getPoseidon() {
 }
 
 export function getConnection() {
+    console.log('RPC:', RPC_URL ? RPC_URL.replace(/api-key=.*/, 'api-key=***') : 'UNDEFINED')
     return new web3.Connection(RPC_URL, 'confirmed')
+}
+
+async function getAccountInfoWithRetry(connection, pubkey, retries = 3) {
+    for (let i = 0; i < retries; i++) {
+        const info = await connection.getAccountInfo(pubkey)
+        if (info) return info
+        console.log(`getAccountInfo returned null for ${pubkey.toBase58()}, retry ${i + 1}/${retries}...`)
+        await new Promise(r => setTimeout(r, 1000 * (i + 1)))
+    }
+    return null
 }
 
 export function getProgram(wallet) {
@@ -112,7 +123,7 @@ export async function deposit(wallet, tokenMint, amount, decimals) {
     const mintPubkey = new PublicKey(tokenMint)
 
     // Detect token program (Token vs Token-2022) — must be done before ATA lookup
-    const mintInfo = await connection.getAccountInfo(mintPubkey)
+    const mintInfo = await getAccountInfoWithRetry(connection, mintPubkey)
     if (!mintInfo) throw new Error('Token mint not found — check the token address')
     const tokenProgramId = mintInfo.owner.equals(TOKEN_2022_PROGRAM_ID) ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID
 
@@ -204,7 +215,7 @@ export async function withdraw(wallet, tokenMint, depositAmount, decimals, noteS
     const recipientPubkey = new PublicKey(recipientAddress)
 
     // Fetch on-chain decimals to match deposit's pool PDA
-    const mintInfo = await connection.getAccountInfo(mintPubkey)
+    const mintInfo = await getAccountInfoWithRetry(connection, mintPubkey)
     if (!mintInfo) throw new Error('Token mint not found — check the token address')
     const tokenProgramId = mintInfo.owner.equals(TOKEN_2022_PROGRAM_ID) ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID
     const onChainDecimals = mintInfo.data[44]
@@ -357,7 +368,7 @@ async function createPool(wallet, tokenMint, rawAmount) {
     const vaultKp = Keypair.generate()
 
     // Detect token program
-    const mintInfo = await connection.getAccountInfo(mintPubkey)
+    const mintInfo = await getAccountInfoWithRetry(connection, mintPubkey)
     if (!mintInfo) throw new Error('Token mint not found — check the token address')
     const tokenProgramId = mintInfo.owner.equals(TOKEN_2022_PROGRAM_ID) ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID
 
