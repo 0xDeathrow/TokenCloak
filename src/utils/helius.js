@@ -178,7 +178,7 @@ export const POPULAR_MINTS = [
 ]
 
 /**
- * Fetch all fungible tokens held by a wallet using Helius DAS searchAssets.
+ * Fetch all tokens held by a wallet using Helius DAS getAssetsByOwner.
  * Returns array of { symbol, name, image, images, mint, balance }.
  */
 export async function getWalletTokens(walletAddress) {
@@ -190,11 +190,10 @@ export async function getWalletTokens(walletAddress) {
             body: JSON.stringify({
                 jsonrpc: '2.0',
                 id: 'wallet-tokens',
-                method: 'searchAssets',
+                method: 'getAssetsByOwner',
                 params: {
                     ownerAddress: walletAddress,
-                    tokenType: 'fungible',
-                    displayOptions: { showFungible: true },
+                    displayOptions: { showFungible: true, showNativeBalance: false },
                 },
             }),
         })
@@ -202,7 +201,12 @@ export async function getWalletTokens(walletAddress) {
         if (!data.result?.items) return []
 
         return data.result.items
-            .filter(a => a.token_info?.balance > 0)
+            .filter(a => {
+                // Only show fungible tokens (not NFTs)
+                const isFungible = a.interface === 'FungibleToken' || a.interface === 'FungibleAsset'
+                const hasBalance = a.token_info?.balance > 0
+                return isFungible && hasBalance
+            })
             .map(asset => {
                 const content = asset.content || {}
                 const metadata = content.metadata || {}
