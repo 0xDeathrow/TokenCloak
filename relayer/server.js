@@ -297,7 +297,22 @@ async function processWithdrawal(jobId) {
                 data: INIT_EXIT_DISC,
             });
             await sendAndConfirmTransaction(connection, new Transaction().add(initIx), [relayerKeypair, exitKp]);
-            exitVaultTokenAccounts = await connection.getTokenAccountsByOwner(exitVaultPda, { mint: mintPubkey });
+            console.log(`[EXIT] Exit vault initialized. Token account: ${exitKp.publicKey.toBase58()}`);
+            // Use the keypair pubkey directly — it IS the token account
+            exitVaultTokenAccounts = { value: [{ pubkey: exitKp.publicKey }] };
+        }
+
+        // Retry if still empty (RPC lag)
+        if (!exitVaultTokenAccounts.value || exitVaultTokenAccounts.value.length === 0) {
+            console.log(`[EXIT] Waiting for RPC to index exit vault...`);
+            for (let retry = 0; retry < 5; retry++) {
+                await new Promise(r => setTimeout(r, 2000));
+                exitVaultTokenAccounts = await connection.getTokenAccountsByOwner(exitVaultPda, { mint: mintPubkey });
+                if (exitVaultTokenAccounts.value.length > 0) break;
+            }
+            if (!exitVaultTokenAccounts.value || exitVaultTokenAccounts.value.length === 0) {
+                throw new Error('Exit vault token account not found after init');
+            }
         }
         const exitTokenAccount = exitVaultTokenAccounts.value[0].pubkey;
 
