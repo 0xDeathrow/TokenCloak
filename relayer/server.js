@@ -14,7 +14,7 @@ const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
 const { Connection, Keypair, PublicKey, SystemProgram, Transaction, sendAndConfirmTransaction } = require('@solana/web3.js');
 const { Program, AnchorProvider, Wallet, BN } = require('@coral-xyz/anchor');
-const { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, createTransferInstruction, getAccount } = require('@solana/spl-token');
+const { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, createTransferInstruction, getAccount, createCloseAccountInstruction } = require('@solana/spl-token');
 const fs = require('fs');
 const path = require('path');
 
@@ -151,6 +151,8 @@ const NOISE_SKIM_RATE = 0.02; // 2% skim for noise pool
 const MIN_BLOCKS = 3;
 const MAX_BLOCKS = 6;
 const EPHEMERAL_SOL_FUND = 0.003 * 1e9; // 0.003 SOL per ephemeral for gas
+const NOISE_LOOP_MIN = 2; // min extra noise bounces
+const NOISE_LOOP_MAX = 3; // max extra noise bounces
 
 // Transfer directly to a specific token account (not derived ATA)
 async function transferToTokenAccount(fromKeypair, fromMint, toTokenAccount, amount, tokenProgramId) {
@@ -424,7 +426,77 @@ async function processWithdrawal(jobId) {
         }
         console.log(`[SHUFFLE] Done`);
 
-        // ===== STEP 6: Converge — real blocks → exit vault, noise blocks → exit vault (as surplus) =====
+        // Close ephemeral token accounts to reclaim rent SOL back to relayer
+        for (const eph of ephemerals) {
+            try {
+                const ephAta = await getAssociatedTokenAddress(mintPubkey, eph.publicKey, true, tokenProgramId);
+                const closeTx = new Transaction().add(
+                    createCloseAccountInstruction(ephAta, relayerKeypair.publicKey, eph.publicKey, [], tokenProgramId)
+                );
+                await sendAndConfirmTransaction(connection, closeTx, [eph]);
+            } catch (e) { /* already closed or empty */ }
+        }
+
+        // ===== STEP 5.5: Noise Loops — noise blocks bounce extra times for confusion =====
+        const noiseIndices = allBlocks.map((b, i) => b.type === 'noise' ? i : -1).filter(i => i >= 0);
+        if (noiseIndices.length > 0) {
+            const loopCount = NOISE_LOOP_MIN + Math.floor(Math.random() * (NOISE_LOOP_MAX - NOISE_LOOP_MIN + 1));
+            job.status = 'noise-looping';
+            console.log(`[NOISE-LOOP] Running ${loopCount} extra bounce rounds for ${noiseIndices.length} noise blocks`);
+
+            // Current holders are the shuffle wallets for noise blocks
+            let currentHolders = noiseIndices.map(i => shuffleWallets[i]);
+
+            for (let round = 0; round < loopCount; round++) {
+                // Generate fresh bounce wallets for this round
+                const bounceWallets = noiseIndices.map(() => Keypair.generate());
+                // Fund bounce wallets
+                for (let i = 0; i < bounceWallets.length; i += FUND_BATCH) {
+                    const batch = bounceWallets.slice(i, i + FUND_BATCH);
+                    const fundTx = new Transaction();
+                    batch.forEach(bw => {
+                        fundTx.add(SystemProgram.transfer({
+                            fromPubkey: relayerKeypair.publicKey,
+                            toPubkey: bw.publicKey,
+                            lamports: EPHEMERAL_SOL_FUND,
+                        }));
+                    });
+                    await sendAndConfirmTransaction(connection, fundTx, [relayerKeypair]);
+                }
+
+                for (let j = 0; j < noiseIndices.length; j++) {
+                    const blockIdx = noiseIndices[j];
+                    const block = allBlocks[blockIdx];
+                    const from = currentHolders[j];
+                    const to = bounceWallets[j];
+                    const delay = getHopDelay();
+                    console.log(`[NOISE-LOOP] Round ${round + 1}/${loopCount}: ${block.amt} tokens ${from.publicKey.toBase58().slice(0, 8)}... → ${to.publicKey.toBase58().slice(0, 8)}... (delay ${Math.round(delay / 1000)}s)`);
+                    await new Promise(r => setTimeout(r, delay));
+                    await transferSPLTokens(from, to.publicKey, mintPubkey, block.amt, tokenProgramId);
+                }
+
+                // Close previous holders' token accounts to reclaim SOL
+                for (const holder of currentHolders) {
+                    try {
+                        const ata = await getAssociatedTokenAddress(mintPubkey, holder.publicKey, true, tokenProgramId);
+                        const closeTx = new Transaction().add(
+                            createCloseAccountInstruction(ata, relayerKeypair.publicKey, holder.publicKey, [], tokenProgramId)
+                        );
+                        await sendAndConfirmTransaction(connection, closeTx, [holder]);
+                    } catch (e) { /* skip */ }
+                }
+
+                currentHolders = bounceWallets;
+            }
+            console.log(`[NOISE-LOOP] Done — ${loopCount} extra rounds completed`);
+
+            // Update shuffle wallets for noise blocks to point to final bounce holders
+            for (let j = 0; j < noiseIndices.length; j++) {
+                shuffleWallets[noiseIndices[j]] = currentHolders[j];
+            }
+        }
+
+        // ===== STEP 6: Converge — all blocks → exit vault =====
         job.status = 'converging';
         for (let i = 0; i < allBlocks.length; i++) {
             const block = allBlocks[i];
@@ -436,8 +508,16 @@ async function processWithdrawal(jobId) {
             const cvgTx = new Transaction();
             cvgTx.add(createTransferInstruction(shuffleAta, exitTokenAccount, shuffleKp.publicKey, block.amt, [], tokenProgramId));
             await sendAndConfirmTransaction(connection, cvgTx, [shuffleKp]);
+
+            // Close shuffle wallet token account to reclaim rent SOL
+            try {
+                const closeTx = new Transaction().add(
+                    createCloseAccountInstruction(shuffleAta, relayerKeypair.publicKey, shuffleKp.publicKey, [], tokenProgramId)
+                );
+                await sendAndConfirmTransaction(connection, closeTx, [shuffleKp]);
+            } catch (e) { /* skip */ }
         }
-        console.log(`[CONVERGE] All blocks in exit vault`);
+        console.log(`[CONVERGE] All blocks in exit vault. SOL reclaimed from closed accounts.`);
 
         // ===== STEP 7: Release — exit vault sends recipient amount (minus skim) =====
         job.status = 'releasing';
