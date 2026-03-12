@@ -126,19 +126,20 @@ async function transferSPLTokens(fromKeypair, toPublicKey, mintPubkey, amount, t
     const fromAta = await getAssociatedTokenAddress(mintPubkey, fromKeypair.publicKey, true, tokenProgramId);
     const toAta = await getAssociatedTokenAddress(mintPubkey, toPublicKey, true, tokenProgramId);
 
-    const tx = new Transaction();
-
-    // Create recipient ATA if it doesn't exist
+    // Create recipient ATA if it doesn't exist — relayer pays to avoid owner issues
     try { await getAccount(connection, toAta); }
     catch {
-        tx.add(createAssociatedTokenAccountInstruction(
-            fromKeypair.publicKey, toAta, toPublicKey, mintPubkey, tokenProgramId
-        ));
+        const createAtaTx = new Transaction().add(
+            createAssociatedTokenAccountInstruction(
+                relayerKeypair.publicKey, toAta, toPublicKey, mintPubkey, tokenProgramId
+            )
+        );
+        await sendAndConfirmTransaction(connection, createAtaTx, [relayerKeypair]);
     }
 
-    // Transfer tokens
+    // Transfer tokens (separate tx, only from wallet signs)
+    const tx = new Transaction();
     tx.add(createTransferInstruction(fromAta, toAta, fromKeypair.publicKey, amount, [], tokenProgramId));
-
     const sig = await sendAndConfirmTransaction(connection, tx, [fromKeypair]);
     return sig;
 }
