@@ -113,6 +113,7 @@ export async function deposit(wallet, tokenMint, amount, decimals) {
 
     // Detect token program (Token vs Token-2022) — must be done before ATA lookup
     const mintInfo = await connection.getAccountInfo(mintPubkey)
+    if (!mintInfo) throw new Error('Token mint not found — check the token address')
     const tokenProgramId = mintInfo.owner.equals(TOKEN_2022_PROGRAM_ID) ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID
 
     // Fetch on-chain decimals from the mint account data (offset 44, 1 byte)
@@ -204,6 +205,7 @@ export async function withdraw(wallet, tokenMint, depositAmount, decimals, noteS
 
     // Fetch on-chain decimals to match deposit's pool PDA
     const mintInfo = await connection.getAccountInfo(mintPubkey)
+    if (!mintInfo) throw new Error('Token mint not found — check the token address')
     const tokenProgramId = mintInfo.owner.equals(TOKEN_2022_PROGRAM_ID) ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID
     const onChainDecimals = mintInfo.data[44]
     const actualDecimals = onChainDecimals !== undefined ? onChainDecimals : decimals
@@ -356,6 +358,7 @@ async function createPool(wallet, tokenMint, rawAmount) {
 
     // Detect token program
     const mintInfo = await connection.getAccountInfo(mintPubkey)
+    if (!mintInfo) throw new Error('Token mint not found — check the token address')
     const tokenProgramId = mintInfo.owner.equals(TOKEN_2022_PROGRAM_ID) ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID
 
     await program.methods.createPool(rawAmount)
