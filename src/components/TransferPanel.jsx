@@ -392,7 +392,7 @@ function TransferPanel({ selectedToken, setSelectedToken, amount, setAmount, rec
                         </div>
                         <div className="info-block">
                             <span className="label">FEE</span>
-                            <div className="info-value">{tab === 'deposit' ? '0.07 SOL' : '2% SKIM + RELAY'}</div>
+                            <div className="info-value">0.07 SOL + 2% TOKEN FEE (MIX + RELAY)</div>
                         </div>
                     </div>
                 </section>
