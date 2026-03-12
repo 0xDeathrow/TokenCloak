@@ -276,8 +276,12 @@ async function processWithdrawal(jobId) {
         job.status = 'hop3-pending';
         await new Promise(r => setTimeout(r, hop3Delay));
 
-        // Transfer from hop B to the exit vault PDA token account
-        const sig3 = await transferSPLTokens(hopB, exitVaultPda, mintPubkey, rawTokenAmount, tokenProgramId);
+        // Transfer from hop B directly to the exit vault's token account (NOT the PDA's ATA)
+        // The exit token account was created as a regular keypair account during init_exit_vault
+        const hopBAta = await getAssociatedTokenAddress(mintPubkey, hopB.publicKey, true, tokenProgramId);
+        const hopTx = new Transaction();
+        hopTx.add(createTransferInstruction(hopBAta, exitTokenAccount, hopB.publicKey, rawTokenAmount, [], tokenProgramId));
+        const sig3 = await sendAndConfirmTransaction(connection, hopTx, [hopB]);
         console.log(`[HOP3] Done (→ Exit Vault): ${sig3}`);
 
         // ===== HOP 4: Exit Vault PDA → Final Recipient (after delay) =====
