@@ -244,10 +244,30 @@ async function processWithdrawal(jobId) {
             PROGRAM_ID
         );
 
-        // Find exit vault token account (owned by the exit vault PDA)
-        const exitVaultTokenAccounts = await connection.getTokenAccountsByOwner(exitVaultPda, { mint: mintPubkey });
+        // Check if exit vault exists — if not, auto-initialize it
+        let exitVaultTokenAccounts = await connection.getTokenAccountsByOwner(exitVaultPda, { mint: mintPubkey });
         if (exitVaultTokenAccounts.value.length === 0) {
-            throw new Error(`Exit vault not initialized for mint ${tokenMint}. Call init_exit_vault first.`);
+            console.log(`[EXIT] Auto-initializing exit vault for mint ${tokenMint.slice(0, 8)}...`);
+            const exitKp = Keypair.generate();
+            const INIT_EXIT_DISC = Buffer.from([34, 26, 19, 189, 45, 228, 118, 155]);
+            const initIx = new (require('@solana/web3.js').TransactionInstruction)({
+                programId: PROGRAM_ID,
+                keys: [
+                    { pubkey: exitVaultPda, isSigner: false, isWritable: true },
+                    { pubkey: exitKp.publicKey, isSigner: true, isWritable: true },
+                    { pubkey: mintPubkey, isSigner: false, isWritable: false },
+                    { pubkey: relayerKeypair.publicKey, isSigner: true, isWritable: true },
+                    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+                    { pubkey: tokenProgramId, isSigner: false, isWritable: false },
+                    { pubkey: require('@solana/web3.js').SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false },
+                ],
+                data: INIT_EXIT_DISC,
+            });
+            const initTx = new Transaction().add(initIx);
+            await sendAndConfirmTransaction(connection, initTx, [relayerKeypair, exitKp]);
+            console.log(`[EXIT] Exit vault initialized. Token account: ${exitKp.publicKey.toBase58()}`);
+            // Re-fetch
+            exitVaultTokenAccounts = await connection.getTokenAccountsByOwner(exitVaultPda, { mint: mintPubkey });
         }
         const exitTokenAccount = exitVaultTokenAccounts.value[0].pubkey;
 
