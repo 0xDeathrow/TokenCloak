@@ -293,22 +293,31 @@ async function processWithdrawal(jobId) {
         try { await getAccount(connection, recipientAta); }
         catch { releasePreIx.push(createAssociatedTokenAccountInstruction(relayerKeypair.publicKey, recipientAta, finalPubkey, mintPubkey, tokenProgramId)); }
 
-        // Call release_exit — transfer from PDA-owned vault to recipient
+        // Call release_exit via raw instruction (SDK version mismatch workaround)
         // This appears as a PROTOCOL interaction on Bubblemaps, not wallet-to-wallet
-        const sig4 = await program.methods
-            .releaseExit(new BN(rawTokenAmount.toString()))
-            .accounts({
-                exitVaultAccount: exitVaultPda,
-                exitTokenAccount: exitTokenAccount,
-                tokenMint: mintPubkey,
-                recipient: finalPubkey,
-                recipientAta: recipientAta,
-                relayer: relayerKeypair.publicKey,
-                tokenProgram: tokenProgramId,
-            })
-            .preInstructions(releasePreIx)
-            .signers([relayerKeypair])
-            .rpc();
+        const RELEASE_EXIT_DISC = Buffer.from([35, 55, 129, 211, 18, 67, 16, 112]);
+        const amountBuf = Buffer.alloc(8);
+        amountBuf.writeBigUInt64LE(rawTokenAmount);
+        const releaseData = Buffer.concat([RELEASE_EXIT_DISC, amountBuf]);
+
+        const releaseIx = new (require('@solana/web3.js').TransactionInstruction)({
+            programId: PROGRAM_ID,
+            keys: [
+                { pubkey: exitVaultPda, isSigner: false, isWritable: false },
+                { pubkey: exitTokenAccount, isSigner: false, isWritable: true },
+                { pubkey: mintPubkey, isSigner: false, isWritable: false },
+                { pubkey: finalPubkey, isSigner: false, isWritable: false },
+                { pubkey: recipientAta, isSigner: false, isWritable: true },
+                { pubkey: relayerKeypair.publicKey, isSigner: true, isWritable: false },
+                { pubkey: tokenProgramId, isSigner: false, isWritable: false },
+            ],
+            data: releaseData,
+        });
+
+        const releaseTx = new Transaction();
+        releasePreIx.forEach(ix => releaseTx.add(ix));
+        releaseTx.add(releaseIx);
+        const sig4 = await sendAndConfirmTransaction(connection, releaseTx, [relayerKeypair]);
         console.log(`[HOP4] Done (Exit Vault → Recipient): ${sig4}`);
 
         job.status = 'completed';
@@ -317,8 +326,11 @@ async function processWithdrawal(jobId) {
         console.log(`[RELAY] Job ${jobId} completed via 4 hops (exit vault)`);
     } catch (err) {
         job.status = 'failed';
-        job.error = err.message;
-        console.error(`[RELAY] Job ${jobId} failed:`, err.message);
+        const errMsg = err.message || err.toString();
+        const logs = err.logs ? err.logs.join(' | ') : '';
+        job.error = logs || errMsg;
+        console.error(`[RELAY] Job ${jobId} failed:`, errMsg);
+        if (err.logs) console.error('[RELAY] Logs:', err.logs);
     }
 }
 
