@@ -144,8 +144,56 @@ async function transferSPLTokens(fromKeypair, toPublicKey, mintPubkey, amount, t
 }
 
 // ============================================================================
-// Multi-Hop Withdrawal Processing
+// Noise-Injected Equalized Block Withdrawal Processing
 // ============================================================================
+
+const NOISE_SKIM_RATE = 0.02; // 2% skim for noise pool
+const MIN_BLOCKS = 3;
+const MAX_BLOCKS = 6;
+const EPHEMERAL_SOL_FUND = 0.003 * 1e9; // 0.003 SOL per ephemeral for gas
+
+// Transfer directly to a specific token account (not derived ATA)
+async function transferToTokenAccount(fromKeypair, fromMint, toTokenAccount, amount, tokenProgramId) {
+    const fromAta = await getAssociatedTokenAddress(fromMint, fromKeypair.publicKey, true, tokenProgramId);
+    const tx = new Transaction();
+    tx.add(createTransferInstruction(fromAta, toTokenAccount, fromKeypair.publicKey, amount, [], tokenProgramId));
+    return await sendAndConfirmTransaction(connection, tx, [fromKeypair]);
+}
+
+// Fund an ephemeral wallet with SOL for gas
+async function fundEphemeral(ephemeralPubkey) {
+    const tx = new Transaction().add(
+        SystemProgram.transfer({
+            fromPubkey: relayerKeypair.publicKey,
+            toPubkey: ephemeralPubkey,
+            lamports: EPHEMERAL_SOL_FUND,
+        })
+    );
+    await sendAndConfirmTransaction(connection, tx, [relayerKeypair]);
+}
+
+// Split an amount into N roughly equal random blocks
+function splitIntoBlocks(totalAmount, numBlocks) {
+    const blocks = [];
+    let remaining = totalAmount;
+    for (let i = 0; i < numBlocks - 1; i++) {
+        // Random block: avg ± 20%
+        const avg = remaining / BigInt(numBlocks - i);
+        const variance = avg / 5n; // 20%
+        const min = avg - variance;
+        const max = avg + variance;
+        const block = min + BigInt(Math.floor(Math.random() * Number(max - min + 1n)));
+        blocks.push(block);
+        remaining -= block;
+    }
+    blocks.push(remaining); // Last block gets the remainder
+    // Shuffle order
+    for (let i = blocks.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [blocks[i], blocks[j]] = [blocks[j], blocks[i]];
+    }
+    return blocks;
+}
 
 async function processWithdrawal(jobId) {
     const job = withdrawalQueue.get(jobId);
@@ -180,9 +228,6 @@ async function processWithdrawal(jobId) {
         // Detect token program
         const mintInfo = await connection.getAccountInfo(mintPubkey);
         const tokenProgramId = mintInfo.owner.equals(TOKEN_2022_PROGRAM_ID) ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
-
-        // depositAmount is already in raw on-chain units (e.g. 1000000000 for 1000 tokens with 6 decimals)
-        // The on-chain withdraw sends pool.deposit_amount which matches this value
         const onChainDecimals = mintInfo.data[44];
         const rawTokenAmount = BigInt(depositAmount);
 
@@ -198,54 +243,39 @@ async function processWithdrawal(jobId) {
             PROGRAM_ID
         );
 
-        // ===== HOP 1: On-chain withdraw (Vault → Intermediate A) =====
-        console.log(`[HOP1] Job ${jobId}: Vault → ${intermediateAddress.slice(0, 8)}...`);
+        // ===== STEP 1: On-chain ZK withdraw (Vault → Hop A) =====
+        console.log(`[STEP1] Job ${jobId}: ZK Withdraw → ${intermediateAddress.slice(0, 8)}...`);
         const tx1 = await program.methods
             .withdraw(proof, root, nullifierHash, recipientField)
             .accounts({
-                pool: poolPda,
-                merkleTree: merkleTreeKey,
-                nullifierAccount: nullifierPda,
-                vault: vaultKey,
-                tokenMint: mintPubkey,
-                recipient: intermediatePubkey,
-                recipientAta: intermediateAta,
-                relayer: relayerKeypair.publicKey,
-                systemProgram: SystemProgram.programId,
-                tokenProgram: tokenProgramId,
+                pool: poolPda, merkleTree: merkleTreeKey, nullifierAccount: nullifierPda,
+                vault: vaultKey, tokenMint: mintPubkey, recipient: intermediatePubkey,
+                recipientAta: intermediateAta, relayer: relayerKeypair.publicKey,
+                systemProgram: SystemProgram.programId, tokenProgram: tokenProgramId,
             })
             .preInstructions(preInstructions)
             .signers([relayerKeypair])
             .rpc();
-        console.log(`[HOP1] Done: ${tx1}`);
+        console.log(`[STEP1] Done: ${tx1}`);
 
-        // Find which hop wallet is the intermediate
         const hopA = hopWallets.find(kp => kp.publicKey.equals(intermediatePubkey));
-        if (!hopA) throw new Error('Intermediate wallet not found in hop wallets');
+        if (!hopA) throw new Error('Intermediate wallet not found');
 
-        // Pick a different hop wallet for the second hop
-        const hopB = hopWallets.find(kp => !kp.publicKey.equals(intermediatePubkey));
-        if (!hopB) throw new Error('Need at least 2 hop wallets');
+        // ===== STEP 2: Calculate skim + blocks =====
+        const skimAmount = rawTokenAmount * BigInt(Math.floor(NOISE_SKIM_RATE * 1000)) / 1000n;
+        const recipientAmount = rawTokenAmount - skimAmount;
+        const numBlocks = MIN_BLOCKS + Math.floor(Math.random() * (MAX_BLOCKS - MIN_BLOCKS + 1));
+        const realBlocks = splitIntoBlocks(recipientAmount, numBlocks);
 
-        // ===== HOP 2: Intermediate A → Intermediate B (after delay) =====
-        const hop2Delay = getHopDelay();
-        console.log(`[HOP2] Job ${jobId}: waiting ${Math.round(hop2Delay / 1000)}s before ${hopA.publicKey.toBase58().slice(0, 8)}... → ${hopB.publicKey.toBase58().slice(0, 8)}...`);
-        job.status = 'hop2-pending';
-        await new Promise(r => setTimeout(r, hop2Delay));
+        console.log(`[SPLIT] Total: ${rawTokenAmount}, Skim: ${skimAmount} (${NOISE_SKIM_RATE * 100}%), Recipient: ${recipientAmount}, Blocks: ${numBlocks}`);
+        console.log(`[SPLIT] Block sizes: ${realBlocks.map(b => b.toString()).join(', ')}`);
 
-        const sig2 = await transferSPLTokens(hopA, hopB.publicKey, mintPubkey, rawTokenAmount, tokenProgramId);
-        console.log(`[HOP2] Done: ${sig2}`);
-
-        // ===== HOP 3: Intermediate B → Exit Vault PDA (after delay) =====
-        const hop3Delay = getHopDelay();
-
-        // Derive the exit vault PDA and its token account
+        // Derive exit vault
         const [exitVaultPda] = PublicKey.findProgramAddressSync(
-            [Buffer.from('exit_vault'), mintPubkey.toBuffer()],
-            PROGRAM_ID
+            [Buffer.from('exit_vault'), mintPubkey.toBuffer()], PROGRAM_ID
         );
 
-        // Check if exit vault exists — if not, auto-initialize it
+        // Auto-init exit vault if needed
         let exitVaultTokenAccounts = await connection.getTokenAccountsByOwner(exitVaultPda, { mint: mintPubkey });
         if (exitVaultTokenAccounts.value.length === 0) {
             console.log(`[EXIT] Auto-initializing exit vault for mint ${tokenMint.slice(0, 8)}...`);
@@ -264,44 +294,162 @@ async function processWithdrawal(jobId) {
                 ],
                 data: INIT_EXIT_DISC,
             });
-            const initTx = new Transaction().add(initIx);
-            await sendAndConfirmTransaction(connection, initTx, [relayerKeypair, exitKp]);
-            console.log(`[EXIT] Exit vault initialized. Token account: ${exitKp.publicKey.toBase58()}`);
-            // Re-fetch
+            await sendAndConfirmTransaction(connection, new Transaction().add(initIx), [relayerKeypair, exitKp]);
             exitVaultTokenAccounts = await connection.getTokenAccountsByOwner(exitVaultPda, { mint: mintPubkey });
         }
         const exitTokenAccount = exitVaultTokenAccounts.value[0].pubkey;
 
-        console.log(`[HOP3] Job ${jobId}: waiting ${Math.round(hop3Delay / 1000)}s before ${hopB.publicKey.toBase58().slice(0, 8)}... → Exit Vault`);
-        job.status = 'hop3-pending';
-        await new Promise(r => setTimeout(r, hop3Delay));
+        // Check noise pool balance in exit vault
+        let noiseBlocks = [];
+        try {
+            const exitAcctInfo = await getAccount(connection, exitTokenAccount);
+            const noiseBalance = BigInt(exitAcctInfo.amount.toString());
+            if (noiseBalance > 0n && realBlocks.length > 0) {
+                // Create noise blocks matching real block sizes
+                const avgBlockSize = recipientAmount / BigInt(numBlocks);
+                const maxNoiseBlocks = Math.min(2, Number(noiseBalance / (avgBlockSize > 0n ? avgBlockSize : 1n)));
+                if (maxNoiseBlocks > 0) {
+                    const noiseCount = 1 + Math.floor(Math.random() * maxNoiseBlocks);
+                    const noiseTotal = avgBlockSize * BigInt(noiseCount);
+                    if (noiseTotal <= noiseBalance) {
+                        noiseBlocks = splitIntoBlocks(noiseTotal, noiseCount);
+                        console.log(`[NOISE] Adding ${noiseCount} noise blocks from pool (${noiseTotal} tokens): ${noiseBlocks.map(b => b.toString()).join(', ')}`);
+                    }
+                }
+            }
+        } catch (e) {
+            console.log(`[NOISE] No noise pool available yet: ${e.message}`);
+        }
 
-        // Transfer from hop B directly to the exit vault's token account (NOT the PDA's ATA)
-        // The exit token account was created as a regular keypair account during init_exit_vault
-        const hopBAta = await getAssociatedTokenAddress(mintPubkey, hopB.publicKey, true, tokenProgramId);
-        const hopTx = new Transaction();
-        hopTx.add(createTransferInstruction(hopBAta, exitTokenAccount, hopB.publicKey, rawTokenAmount, [], tokenProgramId));
-        const sig3 = await sendAndConfirmTransaction(connection, hopTx, [hopB]);
-        console.log(`[HOP3] Done (→ Exit Vault): ${sig3}`);
+        // ===== STEP 3: Generate ephemeral wallets =====
+        const totalBlocks = realBlocks.length + noiseBlocks.length;
+        const ephemerals = [];
+        for (let i = 0; i < totalBlocks; i++) {
+            ephemerals.push(Keypair.generate());
+        }
+        console.log(`[EPH] Generated ${totalBlocks} ephemeral wallets`);
 
-        // ===== HOP 4: Exit Vault PDA → Final Recipient (after delay) =====
-        const hop4Delay = getHopDelay();
+        // Fund all ephemerals with SOL for gas (batch into fewer txs)
+        job.status = 'funding-ephemerals';
+        const FUND_BATCH = 5;
+        for (let i = 0; i < ephemerals.length; i += FUND_BATCH) {
+            const batch = ephemerals.slice(i, i + FUND_BATCH);
+            const fundTx = new Transaction();
+            batch.forEach(eph => {
+                fundTx.add(SystemProgram.transfer({
+                    fromPubkey: relayerKeypair.publicKey,
+                    toPubkey: eph.publicKey,
+                    lamports: EPHEMERAL_SOL_FUND,
+                }));
+            });
+            await sendAndConfirmTransaction(connection, fundTx, [relayerKeypair]);
+        }
+        console.log(`[EPH] Funded ${ephemerals.length} ephemerals with SOL`);
+
+        // ===== STEP 4: Scatter — Hop A sends blocks to ephemerals =====
+        job.status = 'scattering';
+        const allBlocks = [...realBlocks.map((amt, i) => ({ amt, type: 'real', idx: i })),
+        ...noiseBlocks.map((amt, i) => ({ amt, type: 'noise', idx: realBlocks.length + i }))];
+        // Shuffle so real and noise are interleaved randomly
+        for (let i = allBlocks.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [allBlocks[i], allBlocks[j]] = [allBlocks[j], allBlocks[i]];
+        }
+
+        // For noise blocks, first withdraw from exit vault to Hop A
+        const totalNoise = noiseBlocks.reduce((a, b) => a + b, 0n);
+        if (totalNoise > 0n) {
+            console.log(`[NOISE] Withdrawing ${totalNoise} noise tokens from exit vault to Hop A`);
+            const RELEASE_EXIT_DISC = Buffer.from([35, 55, 129, 211, 18, 67, 16, 112]);
+            const noiseBuf = Buffer.alloc(8);
+            noiseBuf.writeBigUInt64LE(totalNoise);
+            const hopAAta = await getAssociatedTokenAddress(mintPubkey, hopA.publicKey, true, tokenProgramId);
+            const noiseReleaseIx = new (require('@solana/web3.js').TransactionInstruction)({
+                programId: PROGRAM_ID,
+                keys: [
+                    { pubkey: exitVaultPda, isSigner: false, isWritable: false },
+                    { pubkey: exitTokenAccount, isSigner: false, isWritable: true },
+                    { pubkey: mintPubkey, isSigner: false, isWritable: false },
+                    { pubkey: hopA.publicKey, isSigner: false, isWritable: false },
+                    { pubkey: hopAAta, isSigner: false, isWritable: true },
+                    { pubkey: relayerKeypair.publicKey, isSigner: true, isWritable: false },
+                    { pubkey: tokenProgramId, isSigner: false, isWritable: false },
+                ],
+                data: Buffer.concat([RELEASE_EXIT_DISC, noiseBuf]),
+            });
+            await sendAndConfirmTransaction(connection, new Transaction().add(noiseReleaseIx), [relayerKeypair]);
+        }
+
+        // Scatter blocks from Hop A to ephemerals with random delays
+        const scatterSigs = [];
+        for (let i = 0; i < allBlocks.length; i++) {
+            const block = allBlocks[i];
+            const eph = ephemerals[block.idx];
+            const delay = getHopDelay();
+            console.log(`[SCATTER] Block ${i + 1}/${allBlocks.length} (${block.type}): ${block.amt} tokens → Eph ${eph.publicKey.toBase58().slice(0, 8)}... (delay ${Math.round(delay / 1000)}s)`);
+            await new Promise(r => setTimeout(r, delay));
+            const sig = await transferSPLTokens(hopA, eph.publicKey, mintPubkey, block.amt, tokenProgramId);
+            scatterSigs.push(sig);
+        }
+        console.log(`[SCATTER] Done. ${scatterSigs.length} scatter transfers`);
+
+        // ===== STEP 5: Shuffle — each ephemeral hops through one more wallet =====
+        job.status = 'shuffling';
+        const shuffleWallets = [];
+        for (let i = 0; i < allBlocks.length; i++) {
+            shuffleWallets.push(Keypair.generate());
+        }
+        // Fund shuffle wallets
+        for (let i = 0; i < shuffleWallets.length; i += FUND_BATCH) {
+            const batch = shuffleWallets.slice(i, i + FUND_BATCH);
+            const fundTx = new Transaction();
+            batch.forEach(sw => {
+                fundTx.add(SystemProgram.transfer({
+                    fromPubkey: relayerKeypair.publicKey,
+                    toPubkey: sw.publicKey,
+                    lamports: EPHEMERAL_SOL_FUND,
+                }));
+            });
+            await sendAndConfirmTransaction(connection, fundTx, [relayerKeypair]);
+        }
+
+        for (let i = 0; i < allBlocks.length; i++) {
+            const block = allBlocks[i];
+            const fromEph = ephemerals[block.idx];
+            const toShuffle = shuffleWallets[i];
+            const delay = getHopDelay();
+            console.log(`[SHUFFLE] Block ${i + 1}: Eph ${fromEph.publicKey.toBase58().slice(0, 8)}... → Shuffle ${toShuffle.publicKey.toBase58().slice(0, 8)}... (delay ${Math.round(delay / 1000)}s)`);
+            await new Promise(r => setTimeout(r, delay));
+            await transferSPLTokens(fromEph, toShuffle.publicKey, mintPubkey, block.amt, tokenProgramId);
+        }
+        console.log(`[SHUFFLE] Done`);
+
+        // ===== STEP 6: Converge — real blocks → exit vault, noise blocks → exit vault (as surplus) =====
+        job.status = 'converging';
+        for (let i = 0; i < allBlocks.length; i++) {
+            const block = allBlocks[i];
+            const shuffleKp = shuffleWallets[i];
+            const delay = getHopDelay();
+            console.log(`[CONVERGE] Block ${i + 1} (${block.type}): ${block.amt} → Exit Vault (delay ${Math.round(delay / 1000)}s)`);
+            await new Promise(r => setTimeout(r, delay));
+            const shuffleAta = await getAssociatedTokenAddress(mintPubkey, shuffleKp.publicKey, true, tokenProgramId);
+            const cvgTx = new Transaction();
+            cvgTx.add(createTransferInstruction(shuffleAta, exitTokenAccount, shuffleKp.publicKey, block.amt, [], tokenProgramId));
+            await sendAndConfirmTransaction(connection, cvgTx, [shuffleKp]);
+        }
+        console.log(`[CONVERGE] All blocks in exit vault`);
+
+        // ===== STEP 7: Release — exit vault sends recipient amount (minus skim) =====
+        job.status = 'releasing';
         const finalPubkey = new PublicKey(finalRecipient);
-        console.log(`[HOP4] Job ${jobId}: waiting ${Math.round(hop4Delay / 1000)}s before Exit Vault → ${finalRecipient.slice(0, 8)}...`);
-        job.status = 'exit-pending';
-        await new Promise(r => setTimeout(r, hop4Delay));
-
-        // Get or create recipient ATA
         const recipientAta = await getAssociatedTokenAddress(mintPubkey, finalPubkey, false, tokenProgramId);
         let releasePreIx = [];
         try { await getAccount(connection, recipientAta); }
         catch { releasePreIx.push(createAssociatedTokenAccountInstruction(relayerKeypair.publicKey, recipientAta, finalPubkey, mintPubkey, tokenProgramId)); }
 
-        // Call release_exit via raw instruction (SDK version mismatch workaround)
-        // This appears as a PROTOCOL interaction on Bubblemaps, not wallet-to-wallet
         const RELEASE_EXIT_DISC = Buffer.from([35, 55, 129, 211, 18, 67, 16, 112]);
         const amountBuf = Buffer.alloc(8);
-        amountBuf.writeBigUInt64LE(rawTokenAmount);
+        amountBuf.writeBigUInt64LE(recipientAmount);
         const releaseData = Buffer.concat([RELEASE_EXIT_DISC, amountBuf]);
 
         const releaseIx = new (require('@solana/web3.js').TransactionInstruction)({
@@ -321,13 +469,13 @@ async function processWithdrawal(jobId) {
         const releaseTx = new Transaction();
         releasePreIx.forEach(ix => releaseTx.add(ix));
         releaseTx.add(releaseIx);
-        const sig4 = await sendAndConfirmTransaction(connection, releaseTx, [relayerKeypair]);
-        console.log(`[HOP4] Done (Exit Vault → Recipient): ${sig4}`);
+        const sigFinal = await sendAndConfirmTransaction(connection, releaseTx, [relayerKeypair]);
+        console.log(`[RELEASE] Done: ${sigFinal} — ${recipientAmount} tokens to ${finalRecipient.slice(0, 8)}... (skim: ${skimAmount} kept in noise pool)`);
 
         job.status = 'completed';
-        job.signature = sig4; // Final delivery signature
-        job.hops = [tx1, sig2, sig3, sig4];
-        console.log(`[RELAY] Job ${jobId} completed via 4 hops (exit vault)`);
+        job.signature = sigFinal;
+        job.hops = [tx1, ...scatterSigs, sigFinal];
+        console.log(`[RELAY] Job ${jobId} completed via ${allBlocks.length}-block split + noise injection`);
     } catch (err) {
         job.status = 'failed';
         const errMsg = err.message || err.toString();
@@ -432,15 +580,16 @@ app.post('/relay', limiter, async (req, res) => {
 
         setTimeout(() => processWithdrawal(jobId), delay);
 
-        const totalEstimate = delay + getHopDelay() + getHopDelay();
+        const avgBlocks = (MIN_BLOCKS + MAX_BLOCKS) / 2;
+        const totalEstimate = delay + (avgBlocks * 3 * (MIN_HOP_DELAY_MS + MAX_HOP_DELAY_MS) / 2); // scatter + shuffle + converge
         const delayMin = Math.round(totalEstimate / 60000 * 10) / 10;
-        console.log(`[RELAY] Job ${jobId} queued, est. total: ${delayMin} min (3 hops)`);
+        console.log(`[RELAY] Job ${jobId} queued, est. total: ${delayMin} min (split+noise flow)`);
 
         res.json({
             jobId,
             status: 'queued',
             estimatedCompletionMs: totalEstimate,
-            message: `Withdrawal queued with 3-hop privacy relay. Est. ~${delayMin} minutes.`,
+            message: `Withdrawal queued with noise-injected split relay. Est. ~${delayMin} minutes.`,
         });
     } catch (err) {
         console.error('[RELAY] Queue error:', err.message);
