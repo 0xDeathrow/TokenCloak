@@ -395,6 +395,15 @@ async function processWithdrawal(jobId) {
         }
         console.log(`[SCATTER] Done. ${scatterSigs.length} scatter transfers`);
 
+        // Send skim to exit vault so it's available for decoys (even on first withdrawal)
+        if (skimAmount > 0n) {
+            console.log(`[SKIM] Sending ${skimAmount} skim tokens from Hop A → Exit Vault`);
+            const hopAAta = await getAssociatedTokenAddress(mintPubkey, hopA.publicKey, true, tokenProgramId);
+            const skimTx = new Transaction();
+            skimTx.add(createTransferInstruction(hopAAta, exitTokenAccount, hopA.publicKey, skimAmount, [], tokenProgramId));
+            await sendAndConfirmTransaction(connection, skimTx, [hopA]);
+        }
+
         // ===== STEP 5: Shuffle — each ephemeral hops through one more wallet =====
         job.status = 'shuffling';
         const shuffleWallets = [];
