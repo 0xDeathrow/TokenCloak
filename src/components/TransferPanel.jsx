@@ -25,6 +25,7 @@ function TransferPanel({ selectedToken, setSelectedToken, amount, setAmount, rec
     const [savedNote, setSavedNote] = useState(null)
     const [depositAddress, setDepositAddress] = useState(null)
     const [depositStep, setDepositStep] = useState('idle') // idle | generating | address | verifying | done
+    const [withdrawStep, setWithdrawStep] = useState('idle') // idle | proof | relay | submitting | done
     const [copied, setCopied] = useState(false)
 
     const hasAmount = amount && parseFloat(amount) > 0
@@ -56,10 +57,11 @@ function TransferPanel({ selectedToken, setSelectedToken, amount, setAmount, rec
             if (selectedToken && hasAmount) return 'generate'
             return 'select'
         } else {
-            if (status?.type === 'success') return 'complete'
-            if (status?.message?.includes('relay') || status?.message?.includes('Privacy')) return 'relay'
-            if (status?.message?.includes('proof') || status?.message?.includes('Proof')) return 'proof'
-            if (hasRecipient) return 'recipient'
+            if (withdrawStep === 'done') return 'complete'
+            if (withdrawStep === 'submitting') return 'complete'
+            if (withdrawStep === 'relay') return 'relay'
+            if (withdrawStep === 'proof') return 'proof'
+            if (hasRecipient && withdrawNote) return 'recipient'
             if (withdrawNote) return 'paste'
             return 'paste'
         }
@@ -154,15 +156,19 @@ function TransferPanel({ selectedToken, setSelectedToken, amount, setAmount, rec
     const handleWithdraw = useCallback(async () => {
         if (!selectedToken || !hasAmount || !hasRecipient || !withdrawNote) return
 
+        setWithdrawStep('proof')
         setStatus({ type: 'loading', message: 'GENERATING ZK PROOF...' })
         try {
             const onProgress = (update) => {
                 if (update.status === 'queued') {
+                    setWithdrawStep('relay')
                     const mins = Math.ceil((update.estimatedCompletionMs || 0) / 60000)
                     setStatus({ type: 'loading', message: `PRIVACY RELAY: ~${mins} MIN REMAINING...` })
                 } else if (update.status === 'processing') {
+                    setWithdrawStep('submitting')
                     setStatus({ type: 'loading', message: 'SUBMITTING WITHDRAWAL...' })
                 } else if (update.status === 'completed') {
+                    setWithdrawStep('submitting')
                     setStatus({ type: 'loading', message: 'CONFIRMING ON-CHAIN...' })
                 }
             }
@@ -177,6 +183,7 @@ function TransferPanel({ selectedToken, setSelectedToken, amount, setAmount, rec
                 onProgress
             )
 
+            setWithdrawStep('done')
             setStatus({
                 type: 'success',
                 message: `WITHDRAWAL COMPLETE — SENT TO ${recipient.slice(0, 8)}...`,
@@ -184,6 +191,7 @@ function TransferPanel({ selectedToken, setSelectedToken, amount, setAmount, rec
             })
         } catch (err) {
             console.error('Withdraw error:', err)
+            setWithdrawStep('idle')
             setStatus({ type: 'error', message: err.message || 'WITHDRAWAL FAILED' })
         }
     }, [selectedToken, amount, recipient, withdrawNote])
@@ -234,10 +242,10 @@ function TransferPanel({ selectedToken, setSelectedToken, amount, setAmount, rec
 
                     {/* Tabs */}
                     <div className="tabs">
-                        <button className={`tab ${tab === 'deposit' ? 'active' : ''}`} onClick={() => { setTab('deposit'); setStatus(null); resetDeposit() }}>
+                        <button className={`tab ${tab === 'deposit' ? 'active' : ''}`} onClick={() => { setTab('deposit'); setStatus(null); resetDeposit(); setWithdrawStep('idle') }}>
                             DEPOSIT
                         </button>
-                        <button className={`tab ${tab === 'withdraw' ? 'active' : ''}`} onClick={() => { setTab('withdraw'); setStatus(null) }}>
+                        <button className={`tab ${tab === 'withdraw' ? 'active' : ''}`} onClick={() => { setTab('withdraw'); setStatus(null); setWithdrawStep('idle') }}>
                             WITHDRAW
                         </button>
                     </div>
